@@ -1,0 +1,12 @@
+<svg viewBox="0 0 120 132" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="ARMADI">
+  <g stroke="currentColor" stroke-width="7" stroke-linecap="round" stroke-linejoin="round" fill="none">
+    <!-- Pierna izquierda de la A -->
+    <path d="M22 112 L60 34" />
+    <!-- Pierna derecha de la A -->
+    <path d="M98 112 L60 34" />
+    <!-- Travesaño -->
+    <path d="M35 86 L85 86" />
+    <!-- Gancho de percha en el vértice -->
+    <path d="M60 34 C60 22 55 12 66 11 C77 10 77 27 63 26" />
+  </g>
+</svg>
