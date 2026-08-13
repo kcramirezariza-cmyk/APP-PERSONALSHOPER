@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ARMADIUSA · Envíos USA → Colombia</title>
+  <link rel="stylesheet" href="styles.css" />
+  <link rel="preconnect" href="https://www.gstatic.com" />
+</head>
+<body>
+
+  <!-- ===================== PANTALLA DE LOGIN ===================== -->
+  <div id="loginScreen" class="login-screen">
+    <form id="loginForm" class="login-card" autocomplete="on">
+      <div class="login-logo"><img src="logo.svg" alt="ARMADI Personal Shopper" /></div>
+      <h1>ARMADIUSA</h1>
+      <p class="login-sub">Envíos USA → Colombia · Ingresa con tu cuenta</p>
+      <input type="text" id="loginEmail" placeholder="Usuario" required autocomplete="username" autocapitalize="none" spellcheck="false" />
+      <input type="password" id="loginPassword" placeholder="Clave" required autocomplete="current-password" />
+      <button type="submit" id="loginBtn">Ingresar</button>
+      <p id="loginError" class="login-error"></p>
+      <p class="login-hint">Acceso privado de ARMADIUSA.</p>
+    </form>
+  </div>
+
+  <!-- ===================== APP ===================== -->
+  <div id="app" class="app hidden">
+
+    <header class="topbar">
+      <div class="brand"><img class="brand-mark" src="logo.svg" alt="" /> <span>ARMADIUSA</span></div>
+      <nav class="tabs">
+        <button class="tab active" data-view="tablero">Tablero</button>
+        <button class="tab" data-view="nueva">＋ Nueva orden</button>
+        <button class="tab" data-view="clientes">Clientes</button>
+      </nav>
+      <div class="topbar-right">
+        <span id="userEmail" class="user-email"></span>
+        <button id="logoutBtn" class="btn-ghost">Salir</button>
+      </div>
+    </header>
+
+    <main class="content">
+
+      <!-- ---------- VISTA TABLERO ---------- -->
+      <section id="view-tablero" class="view">
+        <div class="toolbar">
+          <input type="search" id="searchOrders" placeholder="Buscar por cliente, producto, ciudad o guía…" />
+          <select id="filterStatus">
+            <option value="">Todos los estados</option>
+          </select>
+          <button id="exportOrdersBtn" class="btn-secondary">⬇ Exportar órdenes (Excel)</button>
+        </div>
+        <div id="statsRow" class="stats-row"></div>
+        <div id="board" class="board"></div>
+      </section>
+
+      <!-- ---------- VISTA NUEVA ORDEN ---------- -->
+      <section id="view-nueva" class="view hidden">
+        <form id="orderForm" class="form-card">
+          <h2 id="orderFormTitle">Nueva orden</h2>
+
+          <fieldset>
+            <legend>Producto</legend>
+            <div class="grid-2">
+              <label>Nombre / descripción del producto *
+                <input type="text" id="productName" required placeholder="Ej: Bolso Michael Kors negro" />
+              </label>
+              <label>Foto del producto *
+                <input type="file" id="productPhoto" accept="image/*" capture="environment" />
+                <span class="file-note">Puedes tomar la foto o elegir de la galería.</span>
+              </label>
+            </div>
+            <div id="photoPreviewWrap" class="photo-preview-wrap hidden">
+              <img id="photoPreview" alt="Vista previa" />
+            </div>
+            <div class="grid-3">
+              <label>Valor del producto (COP) *
+                <input type="text" inputmode="numeric" id="productValue" required placeholder="560.000" />
+              </label>
+              <label>Abono del cliente (COP)
+                <input type="text" inputmode="numeric" id="abono" placeholder="200.000" />
+              </label>
+              <label>Saldo pendiente
+                <input type="text" id="saldoView" readonly class="readonly" />
+              </label>
+            </div>
+          </fieldset>
+
+          <fieldset>
+            <legend>Cliente</legend>
+            <label>Buscar cliente existente
+              <input type="text" id="clientSearch" list="clientList" placeholder="Escribe el nombre para autocompletar…" />
+              <datalist id="clientList"></datalist>
+              <span class="file-note">Si no existe, llena los datos y se guardará como cliente nuevo.</span>
+            </label>
+            <div class="grid-2">
+              <label>Nombre *
+                <input type="text" id="cNombre" required />
+              </label>
+              <label>Teléfono *
+                <input type="tel" id="cTelefono" required placeholder="300 000 0000" />
+              </label>
+            </div>
+            <div class="grid-2">
+              <label>Red social (opcional)
+                <input type="text" id="cRed" placeholder="@usuario en Instagram" />
+              </label>
+              <label>Dirección *
+                <input type="text" id="cDireccion" required placeholder="Calle 00 # 00-00" />
+              </label>
+            </div>
+            <div class="grid-2">
+              <label>Barrio *
+                <input type="text" id="cBarrio" required />
+              </label>
+              <label>Punto de referencia (opcional)
+                <input type="text" id="cReferencia" placeholder="Frente al parque, casa azul…" />
+              </label>
+            </div>
+            <div class="grid-2">
+              <label>Ciudad *
+                <input type="text" id="cCiudad" required />
+              </label>
+              <label>Municipio / Depto *
+                <input type="text" id="cMunicipio" required />
+              </label>
+            </div>
+          </fieldset>
+
+          <div class="form-actions">
+            <button type="button" id="cancelOrderBtn" class="btn-ghost">Cancelar</button>
+            <button type="submit" id="saveOrderBtn" class="btn-primary">Guardar orden</button>
+          </div>
+          <p id="orderFormMsg" class="form-msg"></p>
+        </form>
+      </section>
+
+      <!-- ---------- VISTA CLIENTES ---------- -->
+      <section id="view-clientes" class="view hidden">
+        <div class="toolbar">
+          <input type="search" id="searchClients" placeholder="Buscar cliente…" />
+          <button id="exportClientsBtn" class="btn-secondary">⬇ Exportar clientes (Excel)</button>
+        </div>
+        <div id="clientsTableWrap" class="table-wrap"></div>
+      </section>
+
+    </main>
+  </div>
+
+  <!-- ===================== MODAL DETALLE ORDEN ===================== -->
+  <div id="orderModal" class="modal hidden">
+    <div class="modal-card">
+      <button class="modal-close" id="closeModalBtn">✕</button>
+      <div id="orderModalBody"></div>
+    </div>
+  </div>
+
+  <!-- ===================== LIBRERÍAS (CDN) ===================== -->
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-storage-compat.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+
+  <script src="firebase-config.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
