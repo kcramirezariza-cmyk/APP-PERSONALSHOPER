@@ -10,12 +10,12 @@
 // ============================================================
 
 const firebaseConfig = {
-  apiKey: "PEGA_AQUI_TU_API_KEY",
-  authDomain: "TU-PROYECTO.firebaseapp.com",
-  projectId: "TU-PROYECTO",
-  storageBucket: "TU-PROYECTO.appspot.com",
-  messagingSenderId: "000000000000",
-  appId: "1:000000000000:web:xxxxxxxxxxxxxxxx"
+  apiKey: "AIzaSyARoOFY8p05_rVPnopaXSbsOHqYaUp5I5o",
+  authDomain: "app-personalshoper.firebaseapp.com",
+  projectId: "app-personalshoper",
+  storageBucket: "app-personalshoper.firebasestorage.app",
+  messagingSenderId: "1054556678332",
+  appId: "1:1054556678332:web:7eb445e03c695fe9e188b9"
 };
 
 // No modifiques nada debajo de esta línea.
