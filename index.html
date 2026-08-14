@@ -30,8 +30,10 @@
       <div class="brand"><img class="brand-mark" src="logo.svg" alt="" /> <span>ARMADIUSA</span></div>
       <nav class="tabs">
         <button class="tab active" data-view="tablero">Tablero</button>
-        <button class="tab" data-view="nueva">＋ Nueva orden</button>
+        <button class="tab" data-view="nueva" data-role="admin">＋ Nueva orden</button>
         <button class="tab" data-view="clientes">Clientes</button>
+        <button class="tab" data-view="historial">Historial</button>
+        <button class="tab" data-view="dashboard" data-role="admin">Dashboard</button>
       </nav>
       <div class="topbar-right">
         <span id="userEmail" class="user-email"></span>
@@ -44,11 +46,11 @@
       <!-- ---------- VISTA TABLERO ---------- -->
       <section id="view-tablero" class="view">
         <div class="toolbar">
-          <input type="search" id="searchOrders" placeholder="Buscar por cliente, producto, ciudad o guía…" />
+          <input type="search" id="searchOrders" placeholder="Buscar por cliente, N° cliente, producto, ciudad o guía…" />
           <select id="filterStatus">
             <option value="">Todos los estados</option>
           </select>
-          <button id="exportOrdersBtn" class="btn-secondary">⬇ Exportar órdenes (Excel)</button>
+          <button id="exportOrdersBtn" class="btn-secondary" data-role="admin">⬇ Exportar órdenes (Excel)</button>
         </div>
         <div id="statsRow" class="stats-row"></div>
         <div id="board" class="board"></div>
@@ -65,9 +67,9 @@
               <label>Nombre / descripción del producto *
                 <input type="text" id="productName" required placeholder="Ej: Bolso Michael Kors negro" />
               </label>
-              <label>Foto del producto *
+              <label>Foto del producto (opcional)
                 <input type="file" id="productPhoto" accept="image/*" capture="environment" />
-                <span class="file-note">Puedes tomar la foto o elegir de la galería.</span>
+                <span class="file-note">Opcional. Puedes tomar la foto o elegir de la galería.</span>
               </label>
             </div>
             <div id="photoPreviewWrap" class="photo-preview-wrap hidden">
@@ -77,7 +79,7 @@
               <label>Valor del producto (COP) *
                 <input type="text" inputmode="numeric" id="productValue" required placeholder="560.000" />
               </label>
-              <label>Abono del cliente (COP)
+              <label>Abono inicial (COP)
                 <input type="text" inputmode="numeric" id="abono" placeholder="200.000" />
               </label>
               <label>Saldo pendiente
@@ -91,7 +93,7 @@
             <label>Buscar cliente existente
               <input type="text" id="clientSearch" list="clientList" placeholder="Escribe el nombre para autocompletar…" />
               <datalist id="clientList"></datalist>
-              <span class="file-note">Si no existe, llena los datos y se guardará como cliente nuevo.</span>
+              <span class="file-note">Si no existe, llena los datos y se guardará como cliente nuevo (con su N° de cliente).</span>
             </label>
             <div class="grid-2">
               <label>Nombre *
@@ -121,8 +123,8 @@
               <label>Ciudad *
                 <input type="text" id="cCiudad" required />
               </label>
-              <label>Municipio / Depto *
-                <input type="text" id="cMunicipio" required />
+              <label>Departamento *
+                <select id="cDepartamento" required></select>
               </label>
             </div>
           </fieldset>
@@ -138,10 +140,31 @@
       <!-- ---------- VISTA CLIENTES ---------- -->
       <section id="view-clientes" class="view hidden">
         <div class="toolbar">
-          <input type="search" id="searchClients" placeholder="Buscar cliente…" />
-          <button id="exportClientsBtn" class="btn-secondary">⬇ Exportar clientes (Excel)</button>
+          <input type="search" id="searchClients" placeholder="Buscar cliente por nombre, N°, teléfono o ciudad…" />
+          <button id="exportClientsBtn" class="btn-secondary" data-role="admin">⬇ Exportar clientes (Excel)</button>
         </div>
         <div id="clientsTableWrap" class="table-wrap"></div>
+      </section>
+
+      <!-- ---------- VISTA HISTORIAL ---------- -->
+      <section id="view-historial" class="view hidden">
+        <div class="toolbar">
+          <input type="search" id="searchHistorial" placeholder="Buscar en historial por cliente, producto o guía…" />
+          <button id="exportHistorialBtn" class="btn-secondary" data-role="admin">⬇ Exportar historial (Excel)</button>
+        </div>
+        <p class="section-note">Los pedidos <strong>entregados</strong> pasan aquí automáticamente al día siguiente, para no saturar el tablero de procesos.</p>
+        <div id="historialWrap"></div>
+      </section>
+
+      <!-- ---------- VISTA DASHBOARD ---------- -->
+      <section id="view-dashboard" class="view hidden">
+        <div class="toolbar">
+          <label class="inline-lbl">Desde <input type="date" id="dashFrom" /></label>
+          <label class="inline-lbl">Hasta <input type="date" id="dashTo" /></label>
+          <button id="dashClearBtn" class="btn-ghost">Limpiar fechas</button>
+        </div>
+        <div id="dashStats" class="stats-row"></div>
+        <div id="dashBreakdown"></div>
       </section>
 
     </main>
@@ -159,7 +182,6 @@
   <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
-  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-storage-compat.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 
   <script src="firebase-config.js"></script>

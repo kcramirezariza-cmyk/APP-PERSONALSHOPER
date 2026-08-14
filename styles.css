@@ -346,6 +346,7 @@ td .mini-btn:hover { color: #fff; background: var(--red); border-color: var(--re
 .detail-row .k { color: var(--muted); white-space: nowrap; }
 .detail-row span:last-child { text-align: right; }
 .detail-section-title { font-size: 12px; color: var(--text); font-weight: 700; margin: 18px 0 6px; text-transform: uppercase; letter-spacing: .08em; }
+
 /* Timeline de estados */
 .timeline { display: flex; flex-direction: column; gap: 2px; margin: 12px 0; }
 .tl-step { display: flex; align-items: center; gap: 11px; font-size: 13px; padding: 6px 0; }
@@ -355,6 +356,7 @@ td .mini-btn:hover { color: #fff; background: var(--red); border-color: var(--re
 .tl-step .tl-label { color: var(--muted-2); flex: 1; }
 .tl-step.done .tl-label, .tl-step.current .tl-label { color: var(--text); font-weight: 600; }
 .tl-step .tl-date { color: var(--muted); font-size: 11px; }
+
 .modal-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 18px; }
 .modal-actions .btn-primary, .modal-actions .btn-secondary, .modal-actions .btn-ghost { padding: 9px 15px; font-size: 13px; }
 .guia-input-row { display: flex; gap: 8px; margin-top: 6px; }
@@ -369,6 +371,43 @@ td .mini-btn:hover { color: #fff; background: var(--red); border-color: var(--re
   background: var(--accent); color: #fff;
 }
 .badge.done { background: var(--panel); color: var(--text); border: 1px solid var(--line-strong); }
+
+/* ===================== ELEMENTOS NUEVOS ===================== */
+.col-empty { color: var(--muted-2); font-size: 12px; padding: 8px; text-align: center; }
+.empty-box { padding: 26px; text-align: center; color: var(--muted); background: var(--card);
+  border: 1px solid var(--line); border-radius: 12px; }
+.section-note { color: var(--muted); font-size: 12.5px; margin: 0 0 16px; line-height: 1.5; }
+
+/* Etiquetas con input en línea (fechas del dashboard) */
+.inline-lbl { flex-direction: row; align-items: center; gap: 8px; margin-bottom: 0;
+  color: var(--muted); font-size: 13px; }
+.inline-lbl input[type="date"] {
+  background: var(--card); border: 1px solid var(--line-strong); color: var(--text);
+  padding: 8px 10px; border-radius: 9px; font-size: 13px; font-family: inherit;
+}
+.inline-lbl input[type="date"]:focus { outline: 2px solid var(--accent); border-color: transparent; }
+
+/* Selección de tipo de envío */
+.radio-row { display: flex; gap: 18px; margin-top: 4px; }
+.radio { flex-direction: row; align-items: center; gap: 7px; color: var(--text);
+  font-size: 14px; margin-bottom: 0; cursor: pointer; }
+.radio input { width: 16px; height: 16px; accent-color: var(--accent); }
+
+/* Historial por día */
+.hist-day { margin-bottom: 22px; }
+.hist-day-head { display: flex; justify-content: space-between; align-items: baseline;
+  margin-bottom: 8px; padding-bottom: 6px; border-bottom: 2px solid var(--line-strong); }
+.hist-day-head > span:first-child { font-weight: 700; text-transform: capitalize; font-size: 14px; }
+.hist-count { color: var(--muted); font-size: 12.5px; }
+.hist-row { cursor: pointer; }
+.hist-row:hover td { background: var(--bg-soft); }
+
+/* Campo select del formulario */
+label select {
+  background: var(--bg); border: 1px solid var(--line-strong); color: var(--text);
+  padding: 10px 12px; border-radius: 9px; font-size: 14px; font-family: inherit;
+}
+label select:focus { outline: 2px solid var(--accent); border-color: transparent; }
 
 /* ===================== RESPONSIVE ===================== */
 @media (max-width: 640px) {

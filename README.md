@@ -21,22 +21,24 @@ gracias a Firebase, y se publica gratis en **GitHub Pages**.
 
 ### 1. Crear el proyecto en Firebase
 1. Entra a <https://console.firebase.google.com> y crea un proyecto (gratis).
-2. En el menú **Compilación**, activa estos 3 servicios:
+2. En el menú **Compilación**, activa estos 2 servicios:
    - **Authentication** → pestaña *Sign-in method* → habilita **Anónimo** (Anonymous).
    - **Firestore Database** → *Crear base de datos* → modo producción → región (elige `nam5` o la más cercana).
-   - **Storage** → *Comenzar* → modo producción.
 
-### 2. Acceso a la app
-El usuario y la clave están definidos **dentro de la app**, no se crean en Firebase:
+> 📷 Las fotos se guardan comprimidas dentro del registro (Firestore). **No** hace
+> falta activar Storage ni el plan de pago.
 
-| Usuario | Clave |
-|---|---|
-| `admin` | `110826` |
+### 2. Acceso a la app (usuarios y roles)
+Los usuarios y claves están definidos **dentro de la app**, no se crean en Firebase:
 
-> Para cambiarlos, edita las 2 primeras líneas de `app.js`
-> (`ADMIN_USER` y `ADMIN_PASS`).
+| Usuario | Clave | Rol | Qué ve |
+|---|---|---|---|
+| `admin` | `110826` | Administrador | Todo: tablero completo (7 estados), nueva orden, clientes, historial y dashboard |
+| `armadi` | `armadi2026` | Colaboradora Colombia | Solo desde **Enviado (a Col)** hasta **Entregado**, clientes e historial |
+
+> Para cambiarlos, edita el objeto `USERS` al inicio de `app.js`.
 > La opción **Anónimo** de Firebase es solo para que la base de datos siga
-> protegida por sesión; no tienes que crear ningún usuario ahí.
+> protegida por sesión.
 
 ### 3. Pegar la configuración
 1. En **Configuración del proyecto** (engranaje) → *Tus apps* → icono **`</>`** (Web) → registra la app.
@@ -44,7 +46,6 @@ El usuario y la clave están definidos **dentro de la app**, no se crean en Fire
 
 ### 4. Publicar las reglas de seguridad
 - **Firestore → Reglas**: pega el contenido de `firestore.rules` y publica.
-- **Storage → Reglas**: pega el contenido de `storage.rules` y publica.
 
 > Estas reglas exigen haber iniciado sesión, así nadie sin cuenta puede ver los datos.
 
@@ -86,7 +87,8 @@ Mientras tanto, "Entregado" se marca con un clic desde el tablero.
 |---|---|
 | `index.html` | Estructura de la página |
 | `styles.css` | Diseño |
-| `app.js` | Toda la lógica (Firebase, tablero, Excel) |
+| `app.js` | Toda la lógica (Firebase, tablero, historial, dashboard, Excel) |
+| `logo.svg` | Logo (monograma) |
 | `firebase-config.js` | **Tus claves de Firebase** (edítalo) |
 | `firestore.rules` | Reglas de la base de datos |
-| `storage.rules` | Reglas del almacenamiento de fotos |
+| `GUIA-PUBLICACION.md` | Guía paso a paso para publicar |
