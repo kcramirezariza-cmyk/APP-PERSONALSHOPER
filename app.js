@@ -120,6 +120,7 @@ let boxSelection = new Set();       // ids seleccionados para la caja
 let expandedBoxes = new Set();      // grupos desplegados en el tablero (cajas / clientes)
 let colSearch = { por_comprar_online: "", por_comprar_tienda: "" };  // búsqueda por columna
 let clientFilter = null;            // filtrar tablero por N° de cliente ("Ver pedidos")
+let invoiceSelection = new Set();    // productos marcados para facturar en Despachado
 const USD = n => "US$" + (Number(n) || 0).toLocaleString("en-US");
 
 /* ============================================================
@@ -442,9 +443,9 @@ function groupedByClient(list, statusKey) {
           <span class="box-caret">${open ? "▾" : "▸"}</span>
           <span class="box-name">👤 #${c.numero ?? "—"} ${escapeHtml(c.nombre || "")}</span>
           <span class="box-count">${items.length}</span>
-          ${withInvoice ? `<button class="box-invoice" data-invcli="${escapeHtml(k)}" title="Imprimir factura del cliente">🧾</button>` : ""}
+          ${withInvoice ? `<button class="box-invoice" data-invcli="${escapeHtml(k)}" title="Factura de los productos marcados (o todos)">🧾</button>` : ""}
         </div>
-        ${open ? `<div class="box-items">${items.map(o => cardHTML(o)).join("")}</div>` : ""}
+        ${open ? `<div class="box-items">${items.map(o => cardHTML(o, undefined, withInvoice ? invoiceSelection.has(o.id) : undefined)).join("")}</div>` : ""}
       </div>`;
   }).join("");
   return html || `<div class="col-empty">—</div>`;
@@ -497,6 +498,8 @@ function renderBoard() {
     b.addEventListener("click", e => { e.stopPropagation(); editBoxByName(b.dataset.boxedit); }));
   board.querySelectorAll(".box-invoice").forEach(b =>
     b.addEventListener("click", e => { e.stopPropagation(); printInvoiceClient(b.dataset.invcli); }));
+  board.querySelectorAll(".inv-check").forEach(el =>
+    el.addEventListener("click", e => { e.stopPropagation(); toggleInvSelect(el.dataset.inv); }));
 
   // Búsqueda por columna
   board.querySelectorAll(".col-search").forEach(inp =>
@@ -522,6 +525,18 @@ function editBoxByName(name) {
 }
 
 function toggleBoxMode() { boxMode = !boxMode; boxSelection.clear(); renderBoard(); }
+
+// Marcar/desmarcar un producto para la factura del cliente (Despachado)
+function toggleInvSelect(id) {
+  if (invoiceSelection.has(id)) invoiceSelection.delete(id); else invoiceSelection.add(id);
+  const card = document.querySelector(`.card[data-id="${id}"]`);
+  if (card) {
+    const on = invoiceSelection.has(id);
+    card.classList.toggle("inv-selected", on);
+    const chk = card.querySelector(".inv-check");
+    if (chk) chk.textContent = on ? "✓" : "";
+  }
+}
 
 function toggleBoxSelect(id) {
   if (boxSelection.has(id)) boxSelection.delete(id); else boxSelection.add(id);
@@ -602,18 +617,20 @@ async function editBoxGuide(o, fromModal = true) {
   } catch (e) { alert("No se pudo actualizar la guía: " + e.message); }
 }
 
-function cardHTML(o, sel) {
+function cardHTML(o, sel, invSel) {
   const saldo = saldoDe(o);
   const paid = saldo <= 0;
   const c = o.cliente || {};
   const selectable = sel !== undefined;   // en modo "armar caja"
+  const invSelectable = invSel !== undefined;  // selección para factura (Despachado)
   const comprado = o.status === "por_comprar_online" && o.compradoOnline;  // verde
   const thumb = o.fotoURL
     ? `<img class="thumb" src="${o.fotoURL}" alt="" loading="lazy" />`
     : `<div class="thumb"></div>`;
   return `
-    <div class="card ${selectable ? "selectable" : ""} ${sel ? "selected" : ""} ${comprado ? "comprado" : ""}" data-id="${o.id}">
+    <div class="card ${selectable ? "selectable" : ""} ${sel ? "selected" : ""} ${invSelectable ? "inv-selectable" : ""} ${invSel ? "inv-selected" : ""} ${comprado ? "comprado" : ""}" data-id="${o.id}">
       ${selectable ? `<span class="card-check">${sel ? "✓" : ""}</span>` : ""}
+      ${invSelectable ? `<span class="inv-check" data-inv="${o.id}" title="Marcar para facturar">${invSel ? "✓" : ""}</span>` : ""}
       <div class="row1">
         ${thumb}
         <div>
@@ -1716,11 +1733,13 @@ function printInvoice(id) {
   printDoc(t + t);
 }
 
-// Factura de TODOS los productos de un cliente en "Despachado"
+// Factura de un cliente en "Despachado": solo los productos marcados (o todos si no hay marcados)
 function printInvoiceClient(numero) {
-  const orders = ORDERS.filter(o => o.status === "enviado_col"
+  const grupo = ORDERS.filter(o => o.status === "enviado_col"
     && String((o.cliente || {}).numero) === String(numero) && !isArchived(o));
-  if (!orders.length) { alert("Ese cliente no tiene productos en Despachado."); return; }
+  if (!grupo.length) { alert("Ese cliente no tiene productos en Despachado."); return; }
+  const marcados = grupo.filter(o => invoiceSelection.has(o.id));
+  const orders = marcados.length ? marcados : grupo;
   const t = invoiceTicketMulti(orders, orders[0].cliente || {});
   printDoc(t + t);
 }
