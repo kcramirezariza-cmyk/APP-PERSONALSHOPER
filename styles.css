@@ -402,23 +402,32 @@ td .mini-btn:hover { color: #fff; background: var(--red); border-color: var(--re
 .card.selected { border-color: var(--accent); background: var(--bg-soft); }
 .card.selected .card-check { background: var(--accent); border-color: var(--accent); }
 
-/* Agrupación de productos en la misma caja (guía de EE.UU.) */
+/* Agrupación de productos en la misma caja (guía de EE.UU.) — plegable */
 .box-group {
   border: 1px dashed var(--line-strong);
   border-radius: 10px;
-  padding: 8px;
   background: var(--bg-soft);
-  display: flex; flex-direction: column; gap: 8px;
+  overflow: hidden;
 }
+.box-group.open { border-style: solid; }
 .box-group-head {
-  font-size: 12px; font-weight: 700; color: var(--text);
-  display: flex; justify-content: space-between; align-items: center;
-  padding: 2px 2px 6px; border-bottom: 1px solid var(--line);
+  font-size: 12.5px; font-weight: 700; color: var(--text);
+  display: flex; align-items: center; gap: 8px;
+  padding: 10px; cursor: pointer; user-select: none;
 }
-.box-group-head span {
+.box-group-head:hover { background: var(--panel); }
+.box-caret { color: var(--muted); width: 10px; }
+.box-name { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.box-count {
   background: var(--accent); color: #fff; font-size: 11px;
-  padding: 1px 8px; border-radius: 20px;
+  padding: 1px 8px; border-radius: 20px; font-weight: 700;
 }
+.box-edit {
+  background: transparent; border: none; color: var(--muted);
+  font-size: 13px; padding: 2px 4px; border-radius: 6px; cursor: pointer;
+}
+.box-edit:hover { color: var(--text); background: var(--card); }
+.box-items { display: flex; flex-direction: column; gap: 10px; padding: 0 8px 8px; }
 
 .col-empty { color: var(--muted-2); font-size: 12px; padding: 8px; text-align: center; }
 .empty-box { padding: 26px; text-align: center; color: var(--muted); background: var(--card);

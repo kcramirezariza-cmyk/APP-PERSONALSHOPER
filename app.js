@@ -88,6 +88,7 @@ let FIREBASE_READY = false;
 let CURRENT = { user: null, role: "admin" };
 let boxMode = false;               // modo "armar caja" en la columna Por enviar
 let boxSelection = new Set();       // ids seleccionados para la caja
+let expandedBoxes = new Set();      // cajas desplegadas en el tablero
 
 /* ============================================================
    INICIALIZACIÓN DE FIREBASE
@@ -336,15 +337,23 @@ function colBodyHTML(list, statusKey) {
   if (statusKey === "enviado" || statusKey === "recibido_col") {
     const groups = {}; const solos = [];
     list.forEach(o => { if (o.guiaUsa) (groups[o.guiaUsa] = groups[o.guiaUsa] || []).push(o); else solos.push(o); });
-    let html = Object.keys(groups).map(g => `
-      <div class="box-group">
-        <div class="box-group-head">📦 Caja ${escapeHtml(g)} <span>${groups[g].length}</span></div>
-        ${groups[g].map(cardHTML).join("")}
-      </div>`).join("");
-    html += solos.map(cardHTML).join("");
+    let html = Object.keys(groups).map(g => {
+      const open = expandedBoxes.has(g);
+      return `
+      <div class="box-group ${open ? "open" : ""}">
+        <div class="box-group-head" data-box="${escapeHtml(g)}">
+          <span class="box-caret">${open ? "▾" : "▸"}</span>
+          <span class="box-name">📦 ${escapeHtml(g)}</span>
+          <span class="box-count">${groups[g].length}</span>
+          <button class="box-edit" data-boxedit="${escapeHtml(g)}" title="Editar nombre de la caja">✎</button>
+        </div>
+        ${open ? `<div class="box-items">${groups[g].map(o => cardHTML(o)).join("")}</div>` : ""}
+      </div>`;
+    }).join("");
+    html += solos.map(o => cardHTML(o)).join("");
     return html || `<div class="col-empty">—</div>`;
   }
-  return list.map(cardHTML).join("") || `<div class="col-empty">—</div>`;
+  return list.map(o => cardHTML(o)).join("") || `<div class="col-empty">—</div>`;
 }
 
 function renderBoard() {
@@ -380,6 +389,22 @@ function renderBoard() {
   if (ec) ec.addEventListener("click", enviarCaja);
   const cc = document.getElementById("cancelCajaBtn");
   if (cc) cc.addEventListener("click", () => { boxMode = false; boxSelection.clear(); renderBoard(); });
+
+  // Plegar/desplegar cajas y editar su nombre
+  board.querySelectorAll(".box-group-head").forEach(h =>
+    h.addEventListener("click", e => {
+      if (e.target.closest(".box-edit")) return;
+      const g = h.dataset.box;
+      if (expandedBoxes.has(g)) expandedBoxes.delete(g); else expandedBoxes.add(g);
+      renderBoard();
+    }));
+  board.querySelectorAll(".box-edit").forEach(b =>
+    b.addEventListener("click", e => { e.stopPropagation(); editBoxByName(b.dataset.boxedit); }));
+}
+
+function editBoxByName(name) {
+  const o = ORDERS.find(x => x.guiaUsa === name);
+  if (o) editBoxGuide(o, false);
 }
 
 function toggleBoxMode() { boxMode = !boxMode; boxSelection.clear(); renderBoard(); }
@@ -437,16 +462,21 @@ async function enviarCaja() {
 }
 
 // Editar / poner la guía real de una caja (admin) — se aplica a toda la caja
-async function editBoxGuide(o) {
+async function editBoxGuide(o, fromModal = true) {
   const actual = o.guiaUsa || "";
-  const nueva = prompt("Guía / código de la caja (BoxExpress).\nSe aplica a TODOS los productos de esta caja:", actual);
+  const nueva = prompt("Nombre / guía de la caja (BoxExpress).\nSe aplica a TODOS los productos de esta caja:", actual);
   if (nueva === null) return;
   const val = nueva.trim();
+  if (!val) return;
   const ids = ORDERS.filter(x => (actual ? x.guiaUsa === actual : x.id === o.id)).map(x => x.id);
+
+  // Conservar el estado de desplegado bajo el nuevo nombre
+  if (actual && expandedBoxes.has(actual)) { expandedBoxes.delete(actual); expandedBoxes.add(val); }
 
   if (!FIREBASE_READY) {
     ids.forEach(id => { const i = ORDERS.findIndex(x => x.id === id); if (i >= 0) ORDERS[i].guiaUsa = val; });
-    saveLocal(); renderAllLocal(); openOrderModal(o.id);
+    saveLocal(); renderAllLocal();
+    if (fromModal) openOrderModal(o.id);
     return;
   }
   try {
@@ -454,7 +484,7 @@ async function editBoxGuide(o) {
     ids.forEach(id => batch.update(db.collection("ordenes").doc(id), {
       guiaUsa: val, updatedAt: firebase.firestore.FieldValue.serverTimestamp() }));
     await batch.commit();
-    setTimeout(() => openOrderModal(o.id), 250);
+    if (fromModal) setTimeout(() => openOrderModal(o.id), 250);
   } catch (e) { alert("No se pudo actualizar la guía: " + e.message); }
 }
 
