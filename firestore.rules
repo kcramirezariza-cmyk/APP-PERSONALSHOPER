@@ -10,5 +10,8 @@ service cloud.firestore {
     match /clientes/{doc} {
       allow read, write: if request.auth != null;
     }
+    match /usuarios/{doc} {
+      allow read, write: if request.auth != null;
+    }
   }
 }

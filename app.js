@@ -126,6 +126,7 @@ function showApp() {
   document.getElementById("userEmail").textContent =
     (USERS[CURRENT.user] ? USERS[CURRENT.user].nombre : CURRENT.user) + " · " + CURRENT.user;
   applyRole();
+  renderUsuarios();
   if (!listenersStarted) {
     if (FIREBASE_READY) startListeners();
     else startLocal();
@@ -173,6 +174,7 @@ function wireLogin() {
 
     localStorage.setItem("armadiusa_ok", "1");
     localStorage.setItem("armadiusa_user", user);
+    localStorage.setItem("armadiusa_role", u.role);
     btn.disabled = true; btn.textContent = "Ingresando…";
     try {
       if (FIREBASE_READY && auth && !auth.currentUser) await auth.signInAnonymously();
@@ -198,7 +200,10 @@ function restoreSession() {
   auth.onAuthStateChanged(() => {
     if (localStorage.getItem("armadiusa_ok") === "1") {
       const user = localStorage.getItem("armadiusa_user");
-      if (USERS[user]) { CURRENT = { user, role: USERS[user].role }; showApp(); }
+      if (!user) return;
+      const role = (USERS[user] && USERS[user].role) || localStorage.getItem("armadiusa_role") || "colombia";
+      CURRENT = { user, role };
+      showApp();
     }
   });
 }
@@ -286,7 +291,7 @@ function setupNav() {
 }
 function showView(view) {
   // Bloquea vistas restringidas para el colaborador
-  if (CURRENT.role !== "admin" && (view === "nueva" || view === "dashboard")) view = "tablero";
+  if (CURRENT.role !== "admin" && (view === "nueva" || view === "dashboard" || view === "usuarios")) view = "tablero";
   document.querySelectorAll(".tab").forEach(t =>
     t.classList.toggle("active", t.dataset.view === view));
   document.querySelectorAll(".view").forEach(v => v.classList.add("hidden"));
@@ -1113,6 +1118,122 @@ function renderClientsTable() {
 }
 
 /* ============================================================
+   USUARIOS (gestión por el administrador)
+   ============================================================ */
+function startUsuariosListener() {
+  db.collection("usuarios").onSnapshot(snap => {
+    if (snap.empty) { seedDefaultUsers(); return; }
+    const u = {};
+    snap.docs.forEach(d => { const x = d.data(); u[d.id] = { pass: x.pass, role: x.role, nombre: x.nombre }; });
+    USERS = u;
+    if (CURRENT.user && USERS[CURRENT.user]) CURRENT.role = USERS[CURRENT.user].role;
+    renderUsuarios();
+  }, err => console.warn("usuarios:", err.message));  // si falla, se usan los DEFAULT_USERS
+}
+function seedDefaultUsers() {
+  Object.keys(DEFAULT_USERS).forEach(u =>
+    db.collection("usuarios").doc(u).set(DEFAULT_USERS[u]).catch(() => {}));
+}
+
+async function saveUser(username, data) {
+  if (!FIREBASE_READY) {
+    const store = lsGet("armadiusa_users", {}); store[username] = data; lsSet("armadiusa_users", store);
+    USERS[username] = data; renderUsuarios(); return;
+  }
+  await db.collection("usuarios").doc(username).set(data);
+}
+async function removeUser(username) {
+  if (!FIREBASE_READY) {
+    const store = lsGet("armadiusa_users", {}); delete store[username]; lsSet("armadiusa_users", store);
+    delete USERS[username]; renderUsuarios(); return;
+  }
+  await db.collection("usuarios").doc(username).delete();
+}
+
+function renderUsuarios() {
+  const wrap = document.getElementById("usuariosWrap");
+  if (!wrap || CURRENT.role !== "admin") return;
+  const rows = Object.keys(USERS).sort().map(u => {
+    const d = USERS[u];
+    return `<tr>
+      <td><strong>${escapeHtml(u)}</strong></td>
+      <td>${escapeHtml(d.nombre || "")}</td>
+      <td>${ROLE_LABELS[d.role] || d.role}</td>
+      <td>
+        <button class="mini-btn" data-clave="${escapeHtml(u)}">Cambiar clave</button>
+        ${u === CURRENT.user ? "" : `<button class="mini-btn" data-deluser="${escapeHtml(u)}">Eliminar</button>`}
+      </td>
+    </tr>`;
+  }).join("");
+
+  wrap.innerHTML = `
+    <div class="form-card" style="max-width:680px;margin:0 auto 20px">
+      <h2>Usuarios</h2>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Usuario</th><th>Nombre</th><th>Rol</th><th></th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table></div>
+    </div>
+    <div class="form-card" style="max-width:680px;margin:0 auto">
+      <h2>Crear nuevo usuario</h2>
+      <div class="grid-2">
+        <label>Usuario (para ingresar) <input id="nuUser" autocomplete="off" placeholder="ej: vendedora" /></label>
+        <label>Nombre <input id="nuNombre" placeholder="Nombre de la persona" /></label>
+      </div>
+      <div class="grid-2">
+        <label>Clave <input id="nuPass" autocomplete="off" /></label>
+        <label>Rol
+          <select id="nuRole">
+            <option value="colombia">Colaborador Colombia (solo envíos)</option>
+            <option value="admin">Administrador (ve todo)</option>
+          </select>
+        </label>
+      </div>
+      <div class="form-actions"><button class="btn-primary" id="crearUserBtn">Crear usuario</button></div>
+      <p id="usuariosMsg" class="form-msg"></p>
+    </div>`;
+
+  wrap.querySelectorAll("[data-clave]").forEach(b => b.addEventListener("click", () => cambiarClave(b.dataset.clave)));
+  wrap.querySelectorAll("[data-deluser]").forEach(b => b.addEventListener("click", () => eliminarUsuario(b.dataset.deluser)));
+  document.getElementById("crearUserBtn").addEventListener("click", crearUsuario);
+}
+
+async function crearUsuario() {
+  const u = document.getElementById("nuUser").value.trim().toLowerCase();
+  const nombre = document.getElementById("nuNombre").value.trim();
+  const pass = document.getElementById("nuPass").value.trim();
+  const role = document.getElementById("nuRole").value;
+  const msg = document.getElementById("usuariosMsg"); msg.className = "form-msg";
+  if (!u || !pass) { msg.className = "form-msg err"; msg.textContent = "Escribe usuario y clave."; return; }
+  if (!/^[a-z0-9_.-]+$/.test(u)) { msg.className = "form-msg err"; msg.textContent = "El usuario solo puede tener letras, números, . _ -"; return; }
+  if (USERS[u]) { msg.className = "form-msg err"; msg.textContent = "Ese usuario ya existe."; return; }
+  try {
+    await saveUser(u, { pass, role, nombre: nombre || u });
+    msg.className = "form-msg ok"; msg.textContent = "✓ Usuario creado.";
+    document.getElementById("nuUser").value = "";
+    document.getElementById("nuNombre").value = "";
+    document.getElementById("nuPass").value = "";
+  } catch (e) { msg.className = "form-msg err"; msg.textContent = "Error: " + e.message; }
+}
+
+async function cambiarClave(u) {
+  const nueva = prompt(`Nueva clave para "${u}":`, "");
+  if (nueva === null) return;
+  const val = nueva.trim();
+  if (!val) { alert("La clave no puede quedar vacía."); return; }
+  try { await saveUser(u, { ...USERS[u], pass: val }); alert("Clave actualizada."); }
+  catch (e) { alert("No se pudo cambiar la clave: " + e.message); }
+}
+
+async function eliminarUsuario(u) {
+  if (u === CURRENT.user) { alert("No puedes eliminar tu propio usuario."); return; }
+  const admins = Object.values(USERS).filter(x => x.role === "admin").length;
+  if (USERS[u] && USERS[u].role === "admin" && admins <= 1) { alert("Debe quedar al menos un administrador."); return; }
+  if (!confirm(`¿Eliminar el usuario "${u}"?`)) return;
+  try { await removeUser(u); } catch (e) { alert("No se pudo eliminar: " + e.message); }
+}
+
+/* ============================================================
    HISTORIAL (entregados de días anteriores)
    ============================================================ */
 function setupHistorial() {
@@ -1391,5 +1512,11 @@ document.addEventListener("DOMContentLoaded", () => {
 
   wireLogin();
   FIREBASE_READY = initFirebase();
-  if (FIREBASE_READY) restoreSession();
+  if (FIREBASE_READY) {
+    auth.signInAnonymously().catch(() => {});  // sesión anónima para leer usuarios
+    startUsuariosListener();
+    restoreSession();
+  } else {
+    USERS = { ...DEFAULT_USERS, ...lsGet("armadiusa_users", {}) };
+  }
 });
