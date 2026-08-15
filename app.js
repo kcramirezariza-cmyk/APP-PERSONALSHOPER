@@ -86,6 +86,8 @@ let unsubOrders = null, unsubClients = null;
 let listenersStarted = false;
 let FIREBASE_READY = false;
 let CURRENT = { user: null, role: "admin" };
+let boxMode = false;               // modo "armar caja" en la columna Por enviar
+let boxSelection = new Set();       // ids seleccionados para la caja
 
 /* ============================================================
    INICIALIZACIÓN DE FIREBASE
@@ -310,7 +312,27 @@ function getFilteredOrders() {
 
 // En Despachado y Recibido Col se agrupan las órdenes que comparten guía de
 // EE.UU. (van en la misma caja). En el resto de columnas se listan sueltas.
+function boxArmPanelHTML() {
+  return `<div class="box-arm">
+    <input id="boxGuideInput" placeholder="Guía BoxExpress (opcional)" autocomplete="off" />
+    <div class="box-arm-actions">
+      <button id="enviarCajaBtn" class="btn-primary" ${boxSelection.size ? "" : "disabled"}>Enviar caja (${boxSelection.size})</button>
+      <button id="cancelCajaBtn" class="btn-ghost">Cancelar</button>
+    </div>
+    <div class="box-arm-hint">Marca los productos que van en esta caja.</div>
+  </div>`;
+}
+
 function colBodyHTML(list, statusKey) {
+  // Modo "armar caja" en Por enviar (solo admin)
+  if (statusKey === "por_enviar" && CURRENT.role === "admin") {
+    const top = boxMode
+      ? boxArmPanelHTML()
+      : `<button class="box-toggle" id="boxToggleBtn">📦 Armar caja</button>`;
+    const cards = list.map(o => cardHTML(o, boxMode ? boxSelection.has(o.id) : undefined)).join("")
+      || `<div class="col-empty">—</div>`;
+    return top + cards;
+  }
   if (statusKey === "enviado" || statusKey === "recibido_col") {
     const groups = {}; const solos = [];
     list.forEach(o => { if (o.guiaUsa) (groups[o.guiaUsa] = groups[o.guiaUsa] || []).push(o); else solos.push(o); });
@@ -344,18 +366,109 @@ function renderBoard() {
   }).join("");
 
   board.querySelectorAll(".card").forEach(el =>
-    el.addEventListener("click", () => openOrderModal(el.dataset.id)));
+    el.addEventListener("click", () => {
+      const id = el.dataset.id;
+      const ord = ORDERS.find(o => o.id === id);
+      if (boxMode && ord && ord.status === "por_enviar") toggleBoxSelect(id);
+      else openOrderModal(id);
+    }));
+
+  // Botones del modo "armar caja"
+  const bt = document.getElementById("boxToggleBtn");
+  if (bt) bt.addEventListener("click", toggleBoxMode);
+  const ec = document.getElementById("enviarCajaBtn");
+  if (ec) ec.addEventListener("click", enviarCaja);
+  const cc = document.getElementById("cancelCajaBtn");
+  if (cc) cc.addEventListener("click", () => { boxMode = false; boxSelection.clear(); renderBoard(); });
 }
 
-function cardHTML(o) {
+function toggleBoxMode() { boxMode = !boxMode; boxSelection.clear(); renderBoard(); }
+
+function toggleBoxSelect(id) {
+  if (boxSelection.has(id)) boxSelection.delete(id); else boxSelection.add(id);
+  const card = document.querySelector(`.card[data-id="${id}"]`);
+  if (card) {
+    const on = boxSelection.has(id);
+    card.classList.toggle("selected", on);
+    const chk = card.querySelector(".card-check");
+    if (chk) chk.textContent = on ? "✓" : "";
+  }
+  const btn = document.getElementById("enviarCajaBtn");
+  if (btn) { btn.textContent = `Enviar caja (${boxSelection.size})`; btn.disabled = boxSelection.size === 0; }
+}
+
+// Código automático de caja si no se escribe guía (CAJA-1, CAJA-2, …)
+function nextBoxCode() {
+  const nums = ORDERS.map(o => { const m = /^CAJA-(\d+)$/.exec(o.guiaUsa || ""); return m ? +m[1] : 0; });
+  return "CAJA-" + (Math.max(0, ...nums, 0) + 1);
+}
+
+// Envía juntos todos los productos seleccionados como una caja → "Enviado a Col"
+async function enviarCaja() {
+  if (boxSelection.size === 0) return;
+  let guia = (document.getElementById("boxGuideInput")?.value || "").trim();
+  if (!guia) guia = nextBoxCode();
+  const ids = [...boxSelection].filter(id => {
+    const o = ORDERS.find(x => x.id === id); return o && o.status === "por_enviar";
+  });
+  if (!ids.length) return;
+
+  if (!FIREBASE_READY) {
+    const now = Date.now();
+    ids.forEach(id => {
+      const i = ORDERS.findIndex(o => o.id === id);
+      ORDERS[i].status = "enviado"; ORDERS[i].guiaUsa = guia; ORDERS[i].updatedAt = now;
+      ORDERS[i].historial = { ...(ORDERS[i].historial || {}), enviado: now };
+    });
+    boxMode = false; boxSelection.clear();
+    saveLocal(); renderAllLocal();
+    return;
+  }
+  try {
+    const batch = db.batch();
+    ids.forEach(id => batch.update(db.collection("ordenes").doc(id), {
+      status: "enviado", guiaUsa: guia,
+      updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+      "historial.enviado": firebase.firestore.FieldValue.serverTimestamp(),
+    }));
+    await batch.commit();
+    boxMode = false; boxSelection.clear();
+  } catch (e) { alert("No se pudo enviar la caja: " + e.message); }
+}
+
+// Editar / poner la guía real de una caja (admin) — se aplica a toda la caja
+async function editBoxGuide(o) {
+  const actual = o.guiaUsa || "";
+  const nueva = prompt("Guía / código de la caja (BoxExpress).\nSe aplica a TODOS los productos de esta caja:", actual);
+  if (nueva === null) return;
+  const val = nueva.trim();
+  const ids = ORDERS.filter(x => (actual ? x.guiaUsa === actual : x.id === o.id)).map(x => x.id);
+
+  if (!FIREBASE_READY) {
+    ids.forEach(id => { const i = ORDERS.findIndex(x => x.id === id); if (i >= 0) ORDERS[i].guiaUsa = val; });
+    saveLocal(); renderAllLocal(); openOrderModal(o.id);
+    return;
+  }
+  try {
+    const batch = db.batch();
+    ids.forEach(id => batch.update(db.collection("ordenes").doc(id), {
+      guiaUsa: val, updatedAt: firebase.firestore.FieldValue.serverTimestamp() }));
+    await batch.commit();
+    setTimeout(() => openOrderModal(o.id), 250);
+  } catch (e) { alert("No se pudo actualizar la guía: " + e.message); }
+}
+
+function cardHTML(o, sel) {
   const saldo = saldoDe(o);
   const paid = saldo <= 0;
   const c = o.cliente || {};
+  const selectable = sel !== undefined;   // en modo "armar caja"
   const thumb = o.fotoURL
     ? `<img class="thumb" src="${o.fotoURL}" alt="" loading="lazy" />`
     : `<div class="thumb"></div>`;
   return `
-    <div class="card" data-id="${o.id}">
+    <div class="card ${selectable ? "selectable" : ""} ${sel ? "selected" : ""}" data-id="${o.id}">
+      ${selectable ? `<span class="card-check">${sel ? "✓" : ""}</span>` : ""}
       <div class="row1">
         ${thumb}
         <div>
@@ -505,6 +618,7 @@ function openOrderModal(id) {
     <div class="modal-actions">
       ${advanceUI}
       ${o.status === "enviado_col" ? `<button class="btn-secondary" id="printBtn">🧾 Imprimir factura</button>` : ""}
+      ${isAdmin && (o.status === "enviado" || o.status === "recibido_col") ? `<button class="btn-secondary" id="boxGuideBtn">✎ Guía de caja</button>` : ""}
       ${isAdmin && idx > 0 ? `<button class="btn-ghost" id="backBtn">← Regresar proceso</button>` : ""}
       ${isAdmin ? `<button class="btn-secondary" id="editOrderBtn">✎ Editar</button>` : ""}
       ${isAdmin ? `<button class="btn-ghost" id="deleteOrderBtn" style="color:var(--red);border-color:var(--red)">Eliminar</button>` : ""}
@@ -518,6 +632,8 @@ function openOrderModal(id) {
   if (backBtn) backBtn.addEventListener("click", () => regresarStatus(o));
   const printBtn = document.getElementById("printBtn");
   if (printBtn) printBtn.addEventListener("click", () => printInvoice(o.id));
+  const boxGuideBtn = document.getElementById("boxGuideBtn");
+  if (boxGuideBtn) boxGuideBtn.addEventListener("click", () => editBoxGuide(o));
   const addAb = document.getElementById("addAbonoBtn");
   if (addAb) addAb.addEventListener("click", () => addAbono(o.id));
   const nuevoAb = document.getElementById("nuevoAbono");
