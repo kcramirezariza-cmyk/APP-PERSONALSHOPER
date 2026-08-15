@@ -131,6 +131,10 @@ function showApp() {
     if (FIREBASE_READY) startListeners();
     else startLocal();
     listenersStarted = true;
+  } else {
+    // Ya había datos cargados (p. ej. cambio de usuario): redibuja con el rol actual
+    renderAll();
+    renderClientsTable();
   }
 }
 function showLogin() {
@@ -192,6 +196,13 @@ function wireLogin() {
 
   document.getElementById("logoutBtn").addEventListener("click", () => {
     localStorage.removeItem("armadiusa_ok");
+    localStorage.removeItem("armadiusa_user");
+    localStorage.removeItem("armadiusa_role");
+    if (unsubOrders) { unsubOrders(); unsubOrders = null; }
+    if (unsubClients) { unsubClients(); unsubClients = null; }
+    listenersStarted = false;
+    ORDERS = []; CLIENTS = [];
+    CURRENT = { user: null, role: "admin" };
     showLogin();
   });
 }
