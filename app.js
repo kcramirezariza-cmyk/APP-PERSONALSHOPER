@@ -3,11 +3,16 @@
    Lógica de la aplicación (Firebase compat + modo prueba local)
    ============================================================ */
 
-/* ---------- Usuarios y roles (cambia usuario/clave aquí) ---------- */
-const USERS = {
+/* ---------- Usuarios y roles ----------
+   Estos son los usuarios por defecto (respaldo). Desde la app, el admin puede
+   crear más usuarios y cambiar claves en la sección "Usuarios" (se guardan en
+   Firebase y se sincronizan). Si Firebase no responde, se usan estos. */
+const DEFAULT_USERS = {
   admin:  { pass: "110826",     role: "admin",    nombre: "Administrador" },
   armadi: { pass: "armadi2026", role: "colombia", nombre: "Colaboradora Colombia" },
 };
+let USERS = { ...DEFAULT_USERS };
+const ROLE_LABELS = { admin: "Administrador (ve todo)", colombia: "Colaborador Colombia (solo envíos)" };
 
 /* ---------- Flujo de estados ---------- */
 const STATUSES = [
@@ -82,6 +87,7 @@ let db, auth;
 let ORDERS = [];
 let CLIENTS = [];
 let editingOrderId = null;
+let selectedClientId = null;        // cliente elegido del desplegable (para reutilizarlo)
 let unsubOrders = null, unsubClients = null;
 let listenersStarted = false;
 let FIREBASE_READY = false;
@@ -809,7 +815,8 @@ function setupOrderForm() {
   // Combobox de clientes: desplegable + búsqueda en la misma barra
   const cs = document.getElementById("clientSearch");
   cs.addEventListener("focus", () => renderClientCombo(cs.value));
-  cs.addEventListener("input", () => renderClientCombo(cs.value));
+  // Al escribir en la barra se considera cliente nuevo (hasta que elija uno)
+  cs.addEventListener("input", () => { selectedClientId = null; renderClientCombo(cs.value); });
   cs.addEventListener("keydown", e => {
     if (e.key === "Escape") document.getElementById("clientComboList").classList.add("hidden");
   });
@@ -851,6 +858,7 @@ function readClientForm() {
 
 function resetOrderForm() {
   editingOrderId = null;
+  selectedClientId = null;
   document.getElementById("orderForm").reset();
   document.getElementById("orderFormTitle").textContent = "Nueva orden";
   document.getElementById("saveOrderBtn").textContent = "Guardar orden";
@@ -874,6 +882,9 @@ function editOrder(id) {
   const saldo = saldoDe(o);
   document.getElementById("saldoView").value = COP(Math.max(0, saldo));
   fillClient(o.cliente || {});
+  // Al editar, reutiliza el mismo cliente del pedido (no crea uno nuevo)
+  const oc = o.cliente || {};
+  selectedClientId = (CLIENTS.find(c => c.numero === oc.numero) || {}).id || null;
   if (o.fotoURL) {
     document.getElementById("photoPreview").src = o.fotoURL;
     document.getElementById("photoPreviewWrap").classList.remove("hidden");
@@ -928,13 +939,14 @@ async function saveOrder(e) {
       catch { fotoURL = null; msg.textContent = "No se pudo procesar la foto; se guarda sin ella."; }
     }
 
-    // N° de cliente (reutiliza el existente por teléfono, o asigna uno nuevo)
-    const existing = CLIENTS.find(c =>
-      onlyDigits(c.telefono) && onlyDigits(c.telefono) === onlyDigits(cliente.telefono));
+    // Reutiliza SOLO si se eligió un cliente del desplegable; si no, crea uno nuevo
+    // con su propio N° (así nunca se sobreescribe otro cliente, aunque coincida el teléfono).
+    const existing = selectedClientId ? CLIENTS.find(c => c.id === selectedClientId) : null;
+    const existingId = existing ? existing.id : null;
     cliente.numero = existing ? existing.numero : nextClientNumber();
 
     if (FIREBASE_READY) {
-      await upsertClient(cliente);
+      await upsertClient(cliente, existingId);
       if (editingOrderId) {
         const update = { productName, valor, cliente,
           updatedAt: firebase.firestore.FieldValue.serverTimestamp() };
@@ -952,7 +964,7 @@ async function saveOrder(e) {
         });
       }
     } else {
-      upsertClientLocal(cliente);
+      upsertClientLocal(cliente, existingId);
       if (editingOrderId) {
         const i = ORDERS.findIndex(o => o.id === editingOrderId);
         if (i >= 0) ORDERS[i] = { ...ORDERS[i], productName, valor, cliente,
@@ -986,13 +998,10 @@ async function saveOrder(e) {
 /* ============================================================
    CLIENTES
    ============================================================ */
-async function upsertClient(cliente) {
-  const existing = CLIENTS.find(c =>
-    onlyDigits(c.telefono) && onlyDigits(c.telefono) === onlyDigits(cliente.telefono));
-  if (existing) {
-    await db.collection("clientes").doc(existing.id).set(
-      { ...cliente, numero: existing.numero,
-        updatedAt: firebase.firestore.FieldValue.serverTimestamp() },
+async function upsertClient(cliente, existingId) {
+  if (existingId) {
+    await db.collection("clientes").doc(existingId).set(
+      { ...cliente, updatedAt: firebase.firestore.FieldValue.serverTimestamp() },
       { merge: true });
   } else {
     await db.collection("clientes").add({
@@ -1001,9 +1010,8 @@ async function upsertClient(cliente) {
     });
   }
 }
-function upsertClientLocal(cliente) {
-  const i = CLIENTS.findIndex(c =>
-    onlyDigits(c.telefono) && onlyDigits(c.telefono) === onlyDigits(cliente.telefono));
+function upsertClientLocal(cliente, existingId) {
+  const i = existingId ? CLIENTS.findIndex(c => c.id === existingId) : -1;
   if (i >= 0) CLIENTS[i] = { ...CLIENTS[i], ...cliente };
   else CLIENTS.push({ id: newLocalId(), ...cliente, createdAt: Date.now() });
   CLIENTS.sort((a, b) => (Number(a.numero) || 0) - (Number(b.numero) || 0));
@@ -1031,7 +1039,11 @@ function renderClientCombo(filter) {
   box.querySelectorAll(".combo-item").forEach(el =>
     el.addEventListener("click", () => {
       const c = CLIENTS.find(x => x.id === el.dataset.id);
-      if (c) { fillClient(c); document.getElementById("clientSearch").value = c.nombre; }
+      if (c) {
+        fillClient(c);
+        document.getElementById("clientSearch").value = c.nombre;
+        selectedClientId = c.id;   // reutilizar este cliente (mismo N°)
+      }
       box.classList.add("hidden");
     }));
 }
