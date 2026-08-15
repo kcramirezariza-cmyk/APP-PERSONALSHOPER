@@ -530,6 +530,19 @@ function cardHTML(o, sel) {
 }
 
 function renderStats() {
+  // La colaboradora (Colombia) solo cuenta pedidos desde "Enviado a Col" en adelante
+  if (CURRENT.role === "colombia") {
+    const start = statusIndex(COLOMBIA_START);
+    const mine = ORDERS.filter(o => statusIndex(o.status) >= start && !isArchived(o));
+    const activos = mine.filter(o => o.status !== "entregado");
+    const porCobrar = mine.reduce((a, o) => a + Math.max(0, saldoDe(o)), 0);
+    document.getElementById("statsRow").innerHTML = `
+      <div class="stat"><div class="num">${mine.length}</div><div class="lbl">Órdenes totales</div></div>
+      <div class="stat"><div class="num">${activos.length}</div><div class="lbl">En proceso</div></div>
+      <div class="stat money"><div class="num">${COP(porCobrar)}</div><div class="lbl">Saldo por cobrar</div></div>`;
+    return;
+  }
+  // Administrador: todas las órdenes
   const activos = ORDERS.filter(o => o.status !== "entregado");
   const porCobrar = ORDERS.reduce((a, o) => a + Math.max(0, saldoDe(o)), 0);
   const recaudado = ORDERS.reduce((a, o) => a + abonoTotal(o), 0);
