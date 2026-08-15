@@ -47,10 +47,10 @@
       <!-- ---------- VISTA TABLERO ---------- -->
       <section id="view-tablero" class="view">
         <div class="toolbar">
-          <input type="search" id="searchOrders" placeholder="Buscar por cliente, N° cliente, producto, ciudad o guía…" />
           <select id="filterStatus">
             <option value="">Todos los estados</option>
           </select>
+          <span id="clientFilterChip" class="filter-chip hidden"></span>
           <button id="exportOrdersBtn" class="btn-secondary" data-role="admin">⬇ Exportar órdenes (Excel)</button>
         </div>
         <div id="statsRow" class="stats-row"></div>
@@ -64,6 +64,13 @@
 
           <fieldset>
             <legend>Producto</legend>
+            <div class="field">
+              <span class="field-cap">Tipo de compra *</span>
+              <div class="radio-row">
+                <label class="radio"><input type="radio" name="tipoCompra" value="tienda" /> Compra en tienda</label>
+                <label class="radio"><input type="radio" name="tipoCompra" value="online" /> Compra Online</label>
+              </div>
+            </div>
             <div class="grid-2">
               <label>Nombre / descripción del producto *
                 <input type="text" id="productName" required placeholder="Ej: Bolso Michael Kors negro" />
@@ -87,6 +94,10 @@
                 <input type="text" id="saldoView" readonly class="readonly" />
               </label>
             </div>
+            <label style="max-width:280px">Costo del producto (USD) — contabilidad
+              <input type="text" inputmode="decimal" id="costoUsdForm" placeholder="Ej: 45" />
+              <span class="file-note">Opcional. Solo lo ve el administrador; no aparece en el tablero.</span>
+            </label>
           </fieldset>
 
           <fieldset>

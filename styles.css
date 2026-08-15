@@ -373,6 +373,43 @@ td .mini-btn:hover { color: #fff; background: var(--red); border-color: var(--re
 .badge.done { background: var(--panel); color: var(--text); border: 1px solid var(--line-strong); }
 
 /* ===================== ELEMENTOS NUEVOS ===================== */
+/* Búsqueda propia de columna */
+.col-search {
+  width: 100%; background: var(--bg); border: 1px solid var(--line-strong); color: var(--text);
+  padding: 8px 10px; border-radius: 8px; font-size: 13px; font-family: inherit; margin-bottom: 2px;
+}
+.col-search:focus { outline: 2px solid var(--accent); border-color: transparent; }
+
+/* Chip de filtro por cliente */
+.filter-chip {
+  display: inline-flex; align-items: center; gap: 8px;
+  background: var(--accent); color: #fff; font-size: 13px; font-weight: 600;
+  padding: 7px 12px; border-radius: 20px;
+}
+.filter-chip button {
+  background: rgba(255,255,255,.25); color: #fff; border: none; border-radius: 50%;
+  width: 18px; height: 18px; line-height: 1; cursor: pointer; font-size: 11px;
+}
+
+/* Tarjeta "comprado" (compra online, aún sin recibir) */
+.card.comprado { border-color: #2f9e44; background: #f0fbf3; }
+.comprado-tag { color: #2f7a3a !important; font-weight: 700; }
+
+/* Botón WhatsApp en el detalle */
+.wa-btn {
+  display: inline-flex; align-items: center; gap: 4px;
+  background: #25d366; color: #fff; text-decoration: none;
+  padding: 4px 12px; border-radius: 8px; font-size: 13px; font-weight: 600;
+}
+.wa-btn:hover { background: #1eb457; }
+
+/* Botón de factura en grupo de cliente */
+.box-invoice {
+  background: transparent; border: none; color: var(--muted);
+  font-size: 14px; padding: 2px 4px; border-radius: 6px; cursor: pointer;
+}
+.box-invoice:hover { color: var(--text); background: var(--card); }
+
 /* Combobox de clientes (desplegable + búsqueda) */
 .field { display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: var(--muted); margin-bottom: 12px; }
 .field-cap { color: var(--muted); }

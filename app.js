@@ -14,9 +14,11 @@ const DEFAULT_USERS = {
 let USERS = { ...DEFAULT_USERS };
 const ROLE_LABELS = { admin: "Administrador (ve todo)", colombia: "Colaborador Colombia (solo envíos)" };
 
-/* ---------- Flujo de estados ---------- */
+/* ---------- Flujo de estados ----------
+   Hay DOS entradas según el tipo de compra (Online / Tienda) que luego convergen. */
 const STATUSES = [
-  { key: "por_comprar",  label: "Por comprar",  color: "#a1a1aa" },
+  { key: "por_comprar_online", label: "Por comprar Online", color: "#a1a1aa" },
+  { key: "por_comprar_tienda", label: "Por comprar Tienda", color: "#a1a1aa" },
   { key: "por_empacar",  label: "Por empacar",  color: "#8b8b93" },
   { key: "por_enviar",   label: "Por enviar",   color: "#71717a" },
   { key: "enviado",      label: "Enviado a Col", color: "#5c5c64" },
@@ -28,6 +30,21 @@ const STATUS_MAP = Object.fromEntries(STATUSES.map(s => [s.key, s]));
 const statusIndex = k => STATUSES.findIndex(s => s.key === k);
 const statusLabel = k => (STATUS_MAP[k] ? STATUS_MAP[k].label : k);
 const statusColor = k => (STATUS_MAP[k] ? STATUS_MAP[k].color : "#8b95b0");
+
+/* Secuencia real de cada pedido según su tipo de compra */
+function pipeline(o) {
+  const first = (o && o.tipoCompra === "online") ? "por_comprar_online" : "por_comprar_tienda";
+  return [first, "por_empacar", "por_enviar", "enviado", "recibido_col", "enviado_col", "entregado"];
+}
+function nextStatus(o) { const p = pipeline(o); const i = p.indexOf(o.status); return (i >= 0 && i < p.length - 1) ? p[i + 1] : null; }
+function prevStatus(o) { const p = pipeline(o); const i = p.indexOf(o.status); return i > 0 ? p[i - 1] : null; }
+
+/* Normaliza pedidos antiguos (antes del split Online/Tienda) */
+function normalizeOrder(o) {
+  if (o.status === "por_comprar") o.status = "por_comprar_tienda";
+  if (!o.tipoCompra) o.tipoCompra = "tienda";
+  return o;
+}
 
 /* El colaborador en Colombia solo ve desde "Enviado (a Col)" en adelante */
 const COLOMBIA_START = "enviado";
@@ -65,6 +82,12 @@ const fmtDay = ts => {
 const startOfToday = () => { const d = new Date(); d.setHours(0, 0, 0, 0); return d.getTime(); };
 const escapeHtml = s => (s == null ? "" : String(s).replace(/[&<>"']/g,
   c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])));
+// Enlace de WhatsApp (asume móvil colombiano de 10 dígitos → agrega 57)
+function waLink(phone) {
+  let d = onlyDigits(phone);
+  if (d.length === 10 && d[0] === "3") d = "57" + d;
+  return "https://wa.me/" + d;
+}
 
 /* ---------- Abonos ---------- */
 function getAbonos(o) {
@@ -94,7 +117,10 @@ let FIREBASE_READY = false;
 let CURRENT = { user: null, role: "admin" };
 let boxMode = false;               // modo "armar caja" en la columna Por enviar
 let boxSelection = new Set();       // ids seleccionados para la caja
-let expandedBoxes = new Set();      // cajas desplegadas en el tablero
+let expandedBoxes = new Set();      // grupos desplegados en el tablero (cajas / clientes)
+let colSearch = { por_comprar_online: "", por_comprar_tienda: "" };  // búsqueda por columna
+let clientFilter = null;            // filtrar tablero por N° de cliente ("Ver pedidos")
+const USD = n => "US$" + (Number(n) || 0).toLocaleString("en-US");
 
 /* ============================================================
    INICIALIZACIÓN DE FIREBASE
@@ -225,7 +251,7 @@ function restoreSession() {
 function startListeners() {
   unsubOrders = db.collection("ordenes").orderBy("createdAt", "desc")
     .onSnapshot(snap => {
-      ORDERS = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      ORDERS = snap.docs.map(d => normalizeOrder({ id: d.id, ...d.data() }));
       renderAll();
     }, err => console.error("Órdenes:", err));
 
@@ -258,7 +284,7 @@ function newLocalId() { return "loc_" + Date.now() + "_" + Math.random().toStrin
 
 function startLocal() {
   localBanner("Modo de prueba: los datos se guardan solo en este navegador. Configura Firebase para producción y sincronizar EE.UU.↔Colombia.");
-  ORDERS = lsGet("armadiusa_orders", []);
+  ORDERS = lsGet("armadiusa_orders", []).map(normalizeOrder);
   CLIENTS = lsGet("armadiusa_clients", []);
   renderAllLocal();
 }
@@ -320,16 +346,25 @@ function visibleStatuses() {
 }
 
 function getFilteredOrders() {
-  const q = document.getElementById("searchOrders").value.toLowerCase().trim();
   const st = document.getElementById("filterStatus").value;
   return ORDERS.filter(o => {
     if (isArchived(o)) return false;            // los archivados van al Historial
     if (st && o.status !== st) return false;
-    if (!q) return true;
-    const c = o.cliente || {};
-    const hay = [o.productName, c.nombre, "#" + c.numero, c.ciudad, c.departamento,
-      o.guia, o.guiaUsa, c.telefono].filter(Boolean).join(" ").toLowerCase();
-    return hay.includes(q);
+    if (clientFilter != null && (o.cliente || {}).numero !== clientFilter) return false;
+    return true;
+  });
+}
+
+// Filtra las tarjetas de una columna (búsqueda propia de esa columna)
+function applyColSearch(colKey) {
+  const q = (colSearch[colKey] || "").toLowerCase().trim();
+  const colEl = [...document.querySelectorAll("#board .col")].find(c => c.dataset.status === colKey);
+  if (!colEl) return;
+  colEl.querySelectorAll(".card").forEach(card => {
+    const o = ORDERS.find(x => x.id === card.dataset.id);
+    const c = (o && o.cliente) || {};
+    const hay = o ? [o.productName, c.nombre, "#" + c.numero, c.ciudad, c.telefono].filter(Boolean).join(" ").toLowerCase() : "";
+    card.style.display = (!q || hay.includes(q)) ? "" : "none";
   });
 }
 
@@ -347,7 +382,13 @@ function boxArmPanelHTML() {
 }
 
 function colBodyHTML(list, statusKey) {
-  // Modo "armar caja" en Por enviar (solo admin)
+  // Columnas de compra: barra de búsqueda propia
+  if (statusKey === "por_comprar_online" || statusKey === "por_comprar_tienda") {
+    const bar = `<input class="col-search" data-col="${statusKey}" placeholder="Buscar en esta columna…" autocomplete="off" value="${escapeHtml(colSearch[statusKey] || "")}" />`;
+    const cards = list.map(o => cardHTML(o)).join("") || `<div class="col-empty">—</div>`;
+    return bar + cards;
+  }
+  // Por enviar: armar caja (solo admin)
   if (statusKey === "por_enviar" && CURRENT.role === "admin") {
     const top = boxMode
       ? boxArmPanelHTML()
@@ -356,14 +397,15 @@ function colBodyHTML(list, statusKey) {
       || `<div class="col-empty">—</div>`;
     return top + cards;
   }
-  if (statusKey === "enviado" || statusKey === "recibido_col") {
+  // Enviado a Col: agrupar por CAJA (guía de EE.UU.)
+  if (statusKey === "enviado") {
     const groups = {}; const solos = [];
     list.forEach(o => { if (o.guiaUsa) (groups[o.guiaUsa] = groups[o.guiaUsa] || []).push(o); else solos.push(o); });
     let html = Object.keys(groups).map(g => {
       const open = expandedBoxes.has(g);
       return `
       <div class="box-group ${open ? "open" : ""}">
-        <div class="box-group-head" data-box="${escapeHtml(g)}">
+        <div class="box-group-head" data-gkey="${escapeHtml(g)}">
           <span class="box-caret">${open ? "▾" : "▸"}</span>
           <span class="box-name">📦 ${escapeHtml(g)}</span>
           <span class="box-count">${groups[g].length}</span>
@@ -375,17 +417,48 @@ function colBodyHTML(list, statusKey) {
     html += solos.map(o => cardHTML(o)).join("");
     return html || `<div class="col-empty">—</div>`;
   }
+  // Recibido Col y Despachado: agrupar por CLIENTE (n° + nombre)
+  if (statusKey === "recibido_col" || statusKey === "enviado_col") {
+    return groupedByClient(list, statusKey);
+  }
   return list.map(o => cardHTML(o)).join("") || `<div class="col-empty">—</div>`;
+}
+
+function groupedByClient(list, statusKey) {
+  const groups = {};
+  list.forEach(o => {
+    const k = ((o.cliente || {}).numero != null) ? String(o.cliente.numero) : "sin";
+    (groups[k] = groups[k] || []).push(o);
+  });
+  const withInvoice = statusKey === "enviado_col";
+  const html = Object.keys(groups).map(k => {
+    const items = groups[k];
+    const c = items[0].cliente || {};
+    const gkey = "cli:" + statusKey + ":" + k;
+    const open = expandedBoxes.has(gkey);
+    return `
+      <div class="box-group ${open ? "open" : ""}">
+        <div class="box-group-head" data-gkey="${escapeHtml(gkey)}">
+          <span class="box-caret">${open ? "▾" : "▸"}</span>
+          <span class="box-name">👤 #${c.numero ?? "—"} ${escapeHtml(c.nombre || "")}</span>
+          <span class="box-count">${items.length}</span>
+          ${withInvoice ? `<button class="box-invoice" data-invcli="${escapeHtml(k)}" title="Imprimir factura del cliente">🧾</button>` : ""}
+        </div>
+        ${open ? `<div class="box-items">${items.map(o => cardHTML(o)).join("")}</div>` : ""}
+      </div>`;
+  }).join("");
+  return html || `<div class="col-empty">—</div>`;
 }
 
 function renderBoard() {
   const board = document.getElementById("board");
   const cols = visibleStatuses();
   const orders = getFilteredOrders();
+  renderClientFilterChip();
   board.innerHTML = cols.map(s => {
     const list = orders.filter(o => o.status === s.key);
     return `
-      <div class="col">
+      <div class="col" data-status="${s.key}">
         <div class="col-head">
           <span class="title"><span class="dot" style="background:${s.color}"></span>${s.label}</span>
           <span class="count">${list.length}</span>
@@ -412,16 +485,35 @@ function renderBoard() {
   const cc = document.getElementById("cancelCajaBtn");
   if (cc) cc.addEventListener("click", () => { boxMode = false; boxSelection.clear(); renderBoard(); });
 
-  // Plegar/desplegar cajas y editar su nombre
+  // Plegar/desplegar grupos (cajas o clientes)
   board.querySelectorAll(".box-group-head").forEach(h =>
     h.addEventListener("click", e => {
-      if (e.target.closest(".box-edit")) return;
-      const g = h.dataset.box;
+      if (e.target.closest(".box-edit") || e.target.closest(".box-invoice")) return;
+      const g = h.dataset.gkey;
       if (expandedBoxes.has(g)) expandedBoxes.delete(g); else expandedBoxes.add(g);
       renderBoard();
     }));
   board.querySelectorAll(".box-edit").forEach(b =>
     b.addEventListener("click", e => { e.stopPropagation(); editBoxByName(b.dataset.boxedit); }));
+  board.querySelectorAll(".box-invoice").forEach(b =>
+    b.addEventListener("click", e => { e.stopPropagation(); printInvoiceClient(b.dataset.invcli); }));
+
+  // Búsqueda por columna
+  board.querySelectorAll(".col-search").forEach(inp =>
+    inp.addEventListener("input", () => { colSearch[inp.dataset.col] = inp.value; applyColSearch(inp.dataset.col); }));
+  Object.keys(colSearch).forEach(applyColSearch);
+}
+
+// Chip que indica que se está viendo un solo cliente (desde "Ver pedidos")
+function renderClientFilterChip() {
+  const chip = document.getElementById("clientFilterChip");
+  if (!chip) return;
+  if (clientFilter == null) { chip.classList.add("hidden"); chip.innerHTML = ""; return; }
+  const c = CLIENTS.find(x => x.numero === clientFilter);
+  chip.classList.remove("hidden");
+  chip.innerHTML = `Viendo pedidos de #${clientFilter} ${escapeHtml(c ? c.nombre : "")} <button id="clearClientFilter">✕</button>`;
+  const b = document.getElementById("clearClientFilter");
+  if (b) b.addEventListener("click", () => { clientFilter = null; renderBoard(); });
 }
 
 function editBoxByName(name) {
@@ -515,11 +607,12 @@ function cardHTML(o, sel) {
   const paid = saldo <= 0;
   const c = o.cliente || {};
   const selectable = sel !== undefined;   // en modo "armar caja"
+  const comprado = o.status === "por_comprar_online" && o.compradoOnline;  // verde
   const thumb = o.fotoURL
     ? `<img class="thumb" src="${o.fotoURL}" alt="" loading="lazy" />`
     : `<div class="thumb"></div>`;
   return `
-    <div class="card ${selectable ? "selectable" : ""} ${sel ? "selected" : ""}" data-id="${o.id}">
+    <div class="card ${selectable ? "selectable" : ""} ${sel ? "selected" : ""} ${comprado ? "comprado" : ""}" data-id="${o.id}">
       ${selectable ? `<span class="card-check">${sel ? "✓" : ""}</span>` : ""}
       <div class="row1">
         ${thumb}
@@ -534,6 +627,7 @@ function cardHTML(o, sel) {
           ${paid ? "Pagado ✓" : "Debe " + COP(saldo)}
         </span>
       </div>
+      ${comprado ? `<div class="guia comprado-tag">✅ Comprado · falta recibir</div>` : ""}
       ${o.guiaUsa ? `<div class="guia">📦 EE.UU.: ${escapeHtml(o.guiaUsa)}</div>` : ""}
       ${o.guia ? `<div class="guia">Guía: ${escapeHtml(o.guia)}</div>`
         : (o.tipoEnvio === "domicilio" ? `<div class="guia">Domicilio</div>` : "")}
@@ -571,7 +665,6 @@ function setupFilters() {
     opt.value = s.key; opt.textContent = s.label;
     sel.appendChild(opt);
   });
-  document.getElementById("searchOrders").addEventListener("input", renderBoard);
   sel.addEventListener("change", renderBoard);
 }
 
@@ -582,21 +675,23 @@ function openOrderModal(id) {
   const o = ORDERS.find(x => x.id === id);
   if (!o) return;
   const saldo = saldoDe(o);
-  const idx = statusIndex(o.status);
   const isAdmin = CURRENT.role === "admin";
 
-  const timeline = STATUSES.map((s, i) => {
-    const cls = i < idx ? "done" : i === idx ? "current" : "";
-    const when = o.historial && o.historial[s.key];
+  // Recorrido según el tipo de compra (Online o Tienda)
+  const pl = pipeline(o);
+  const curIdx = pl.indexOf(o.status);
+  const timeline = pl.map((k, i) => {
+    const cls = i < curIdx ? "done" : i === curIdx ? "current" : "";
+    const when = o.historial && o.historial[k];
     return `<div class="tl-step ${cls}">
       <span class="tl-dot"></span>
-      <span class="tl-label">${s.label}</span>
+      <span class="tl-label">${statusLabel(k)}</span>
       <span class="tl-date">${when ? fmtDate(when) : ""}</span>
     </div>`;
   }).join("");
 
   const c = o.cliente || {};
-  const nextStatus = STATUSES[idx + 1];
+  const nextKey = nextStatus(o);
 
   // Listado de abonos
   const abonos = getAbonos(o);
@@ -614,6 +709,15 @@ function openOrderModal(id) {
   let advanceUI = "";
   if (o.status === "entregado") {
     advanceUI = `<span class="badge done">✓ Proceso completo</span>`;
+  } else if (o.status === "por_comprar_online") {
+    // 2 pasos: 1) marcar comprado (aún no lo tenemos)  2) confirmar recibido físico → Por empacar
+    if (!o.compradoOnline) {
+      advanceUI = `<button class="btn-primary" id="compradoBtn">✅ Marcar como comprado</button>`;
+    } else {
+      advanceUI = `
+        <span class="badge done" style="margin-right:6px">✅ Comprado</span>
+        <button class="btn-primary" id="advanceBtn">📦 Confirmar recibido físico → Por empacar</button>`;
+    }
   } else if (o.status === "por_enviar") {
     // Paso a "Despachado": guía de la transportadora de EE.UU. (BoxExpress), opcional
     const guides = [...new Set(ORDERS.map(x => x.guiaUsa).filter(Boolean))];
@@ -642,8 +746,17 @@ function openOrderModal(id) {
         </div>
       </div>`;
   } else {
-    advanceUI = `<button class="btn-primary" id="advanceBtn">Avanzar a: ${nextStatus.label} →</button>`;
+    advanceUI = `<button class="btn-primary" id="advanceBtn">Avanzar a: ${statusLabel(nextKey)} →</button>`;
   }
+
+  // Casilla de costo del producto en USD (solo en las etapas de compra)
+  const enCompra = o.status === "por_comprar_online" || o.status === "por_comprar_tienda";
+  const costoUI = (enCompra && isAdmin) ? `
+    <div class="detail-section-title">Costo del producto (USD)</div>
+    <div class="guia-input-row">
+      <input type="text" inputmode="decimal" id="costoUsdInput" placeholder="Costo en dólares (US$)" value="${o.costoUsd || ""}" />
+      <button class="btn-secondary" id="saveCostoBtn">Guardar costo</button>
+    </div>` : "";
 
   const envioInfo = o.tipoEnvio
     ? `<div class="detail-row"><span class="k">Tipo de envío</span><span>${o.tipoEnvio === "domicilio" ? "Domicilio" : "Interrapidísimo"}</span></div>`
@@ -662,11 +775,13 @@ function openOrderModal(id) {
       <span style="color:${saldo > 0 ? "var(--amber)" : "var(--green)"};font-weight:700">
         ${saldo > 0 ? COP(saldo) : "Pagado ✓"}</span></div>
     ${abonoAddUI}
+    ${costoUI}
 
     <div class="detail-section-title">Cliente</div>
     <div class="detail-row"><span class="k">N° de cliente</span><span>${c.numero ? "#" + c.numero : "—"}</span></div>
     <div class="detail-row"><span class="k">Nombre</span><span>${escapeHtml(c.nombre)}</span></div>
     <div class="detail-row"><span class="k">Teléfono</span><span>${escapeHtml(c.telefono)}</span></div>
+    ${c.telefono ? `<div class="detail-row"><span class="k">WhatsApp</span><span><a class="wa-btn" href="${waLink(c.telefono)}" target="_blank" rel="noopener">💬 Abrir chat</a></span></div>` : ""}
     ${c.red ? `<div class="detail-row"><span class="k">Red social</span><span>${escapeHtml(c.red)}</span></div>` : ""}
     <div class="detail-row"><span class="k">Dirección</span><span>${escapeHtml(c.direccion)}</span></div>
     <div class="detail-row"><span class="k">Barrio</span><span>${escapeHtml(c.barrio)}</span></div>
@@ -684,7 +799,7 @@ function openOrderModal(id) {
       ${advanceUI}
       ${o.status === "enviado_col" ? `<button class="btn-secondary" id="printBtn">🧾 Imprimir factura</button>` : ""}
       ${isAdmin && (o.status === "enviado" || o.status === "recibido_col") ? `<button class="btn-secondary" id="boxGuideBtn">✎ Guía de caja</button>` : ""}
-      ${isAdmin && idx > 0 ? `<button class="btn-ghost" id="backBtn">← Regresar proceso</button>` : ""}
+      ${isAdmin && prevStatus(o) ? `<button class="btn-ghost" id="backBtn">← Regresar proceso</button>` : ""}
       ${isAdmin ? `<button class="btn-secondary" id="editOrderBtn">✎ Editar</button>` : ""}
       ${isAdmin ? `<button class="btn-ghost" id="deleteOrderBtn" style="color:var(--red);border-color:var(--red)">Eliminar</button>` : ""}
     </div>`;
@@ -693,6 +808,10 @@ function openOrderModal(id) {
 
   const advBtn = document.getElementById("advanceBtn");
   if (advBtn) advBtn.addEventListener("click", () => advanceStatus(o));
+  const compradoBtn = document.getElementById("compradoBtn");
+  if (compradoBtn) compradoBtn.addEventListener("click", () => marcarComprado(o.id));
+  const saveCostoBtn = document.getElementById("saveCostoBtn");
+  if (saveCostoBtn) saveCostoBtn.addEventListener("click", () => guardarCosto(o.id));
   const backBtn = document.getElementById("backBtn");
   if (backBtn) backBtn.addEventListener("click", () => regresarStatus(o));
   const printBtn = document.getElementById("printBtn");
@@ -735,15 +854,14 @@ async function addAbono(id) {
 }
 
 async function advanceStatus(o) {
-  const idx = statusIndex(o.status);
-  const next = STATUSES[idx + 1];
+  const next = nextStatus(o);
   if (!next) return;
 
   let guia = null, tipoEnvio = null, guiaUsa = null;
-  if (next.key === "enviado") {
+  if (next === "enviado") {
     guiaUsa = (document.getElementById("guiaUsaInput")?.value || "").trim();  // opcional
   }
-  if (next.key === "enviado_col") {
+  if (next === "enviado_col") {
     const t = document.querySelector("input[name='tipoEnvio']:checked");
     tipoEnvio = t ? t.value : "interrapidisimo";
     guia = (document.getElementById("guiaInput")?.value || "").trim();  // opcional
@@ -752,9 +870,9 @@ async function advanceStatus(o) {
   if (!FIREBASE_READY) {
     const i = ORDERS.findIndex(x => x.id === o.id);
     if (i >= 0) {
-      ORDERS[i].status = next.key;
+      ORDERS[i].status = next;
       ORDERS[i].updatedAt = Date.now();
-      ORDERS[i].historial = { ...(ORDERS[i].historial || {}), [next.key]: Date.now() };
+      ORDERS[i].historial = { ...(ORDERS[i].historial || {}), [next]: Date.now() };
       if (guiaUsa) ORDERS[i].guiaUsa = guiaUsa;
       if (tipoEnvio) ORDERS[i].tipoEnvio = tipoEnvio;
       if (guia) { ORDERS[i].guia = guia; ORDERS[i].rastreoActivo = tipoEnvio === "interrapidisimo"; }
@@ -764,9 +882,9 @@ async function advanceStatus(o) {
   }
 
   const update = {
-    status: next.key,
+    status: next,
     updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
-    [`historial.${next.key}`]: firebase.firestore.FieldValue.serverTimestamp(),
+    [`historial.${next}`]: firebase.firestore.FieldValue.serverTimestamp(),
   };
   if (guiaUsa) update.guiaUsa = guiaUsa;
   if (tipoEnvio) update.tipoEnvio = tipoEnvio;
@@ -778,22 +896,53 @@ async function advanceStatus(o) {
   } catch (e) { alert("No se pudo actualizar: " + e.message); }
 }
 
+// Compra Online: marcar como comprado (aún no se recibe físicamente) → tarjeta verde
+async function marcarComprado(id) {
+  if (!FIREBASE_READY) {
+    const i = ORDERS.findIndex(x => x.id === id);
+    if (i >= 0) { ORDERS[i].compradoOnline = true; ORDERS[i].updatedAt = Date.now(); }
+    saveLocal(); renderAllLocal(); openOrderModal(id);
+    return;
+  }
+  try {
+    await db.collection("ordenes").doc(id).update({
+      compradoOnline: true, updatedAt: firebase.firestore.FieldValue.serverTimestamp() });
+    setTimeout(() => openOrderModal(id), 250);
+  } catch (e) { alert("No se pudo marcar como comprado: " + e.message); }
+}
+
+// Guardar el costo del producto en USD
+async function guardarCosto(id) {
+  const raw = (document.getElementById("costoUsdInput")?.value || "").replace(/[^0-9.]/g, "");
+  const costoUsd = Number(raw) || 0;
+  if (!FIREBASE_READY) {
+    const i = ORDERS.findIndex(x => x.id === id);
+    if (i >= 0) { ORDERS[i].costoUsd = costoUsd; ORDERS[i].updatedAt = Date.now(); }
+    saveLocal(); renderAllLocal(); openOrderModal(id);
+    return;
+  }
+  try {
+    await db.collection("ordenes").doc(id).update({
+      costoUsd, updatedAt: firebase.firestore.FieldValue.serverTimestamp() });
+    setTimeout(() => openOrderModal(id), 250);
+  } catch (e) { alert("No se pudo guardar el costo: " + e.message); }
+}
+
 // Regresar el pedido al proceso anterior (solo admin)
 async function regresarStatus(o) {
-  const idx = statusIndex(o.status);
-  if (idx <= 0) return;
-  const prev = STATUSES[idx - 1];
-  if (!confirm(`¿Regresar este pedido a "${prev.label}"?`)) return;
+  const prev = prevStatus(o);
+  if (!prev) return;
+  if (!confirm(`¿Regresar este pedido a "${statusLabel(prev)}"?`)) return;
 
   if (!FIREBASE_READY) {
     const i = ORDERS.findIndex(x => x.id === o.id);
-    if (i >= 0) { ORDERS[i].status = prev.key; ORDERS[i].updatedAt = Date.now(); }
+    if (i >= 0) { ORDERS[i].status = prev; ORDERS[i].updatedAt = Date.now(); }
     saveLocal(); renderAllLocal(); closeModal();
     return;
   }
   try {
     await db.collection("ordenes").doc(o.id).update({
-      status: prev.key, updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+      status: prev, updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
     });
     closeModal();
   } catch (e) { alert("No se pudo regresar: " + e.message); }
@@ -910,6 +1059,12 @@ function editOrder(id) {
   document.getElementById("abono").placeholder = "Abono inicial ya registrado";
   const saldo = saldoDe(o);
   document.getElementById("saldoView").value = COP(Math.max(0, saldo));
+  // Tipo de compra y costo USD
+  const tc = o.tipoCompra === "online" ? "online" : "tienda";
+  const tcEl = document.querySelector(`input[name='tipoCompra'][value='${tc}']`);
+  if (tcEl) tcEl.checked = true;
+  const costoEl = document.getElementById("costoUsdForm");
+  if (costoEl) costoEl.value = o.costoUsd || "";
   fillClient(o.cliente || {});
   // Al editar, reutiliza el mismo cliente del pedido (no crea uno nuevo)
   const oc = o.cliente || {};
@@ -948,15 +1103,23 @@ async function saveOrder(e) {
   const abonoIni = parseNum(document.getElementById("abono").value);
   const productName = document.getElementById("productName").value.trim();
   const file = document.getElementById("productPhoto").files[0];
+  const tipoCompraEl = document.querySelector("input[name='tipoCompra']:checked");
+  const tipoCompra = tipoCompraEl ? tipoCompraEl.value : null;
+  const costoUsd = Number((document.getElementById("costoUsdForm")?.value || "").replace(/[^0-9.]/g, "")) || 0;
 
   if (!productName || !cliente.nombre || !valor) {
     msg.className = "form-msg err"; msg.textContent = "Completa producto, valor y nombre del cliente.";
+    return;
+  }
+  if (!tipoCompra) {
+    msg.className = "form-msg err"; msg.textContent = "Marca si es Compra en tienda o Compra Online.";
     return;
   }
   if (!cliente.departamento) {
     msg.className = "form-msg err"; msg.textContent = "Selecciona el departamento del cliente.";
     return;
   }
+  const initStatus = tipoCompra === "online" ? "por_comprar_online" : "por_comprar_tienda";
 
   btn.disabled = true; btn.textContent = "Guardando…";
   try {
@@ -977,17 +1140,20 @@ async function saveOrder(e) {
     if (FIREBASE_READY) {
       await upsertClient(cliente, existingId);
       if (editingOrderId) {
-        const update = { productName, valor, cliente,
+        const cur = ORDERS.find(x => x.id === editingOrderId) || {};
+        const update = { productName, valor, cliente, tipoCompra, costoUsd,
           updatedAt: firebase.firestore.FieldValue.serverTimestamp() };
         if (fotoURL) update.fotoURL = fotoURL;
+        // Si sigue en etapa de compra, sincroniza la columna con el tipo elegido
+        if (cur.status === "por_comprar_online" || cur.status === "por_comprar_tienda") update.status = initStatus;
         await db.collection("ordenes").doc(editingOrderId).update(update);
       } else {
         const abonos = abonoIni > 0 ? [{ monto: abonoIni, fecha: Date.now() }] : [];
         await db.collection("ordenes").add({
           productName, valor, cliente, fotoURL: fotoURL || null,
-          abonos, abono: abonoIni,
-          status: "por_comprar", guia: "", tipoEnvio: null,
-          historial: { por_comprar: firebase.firestore.FieldValue.serverTimestamp() },
+          abonos, abono: abonoIni, tipoCompra, costoUsd, compradoOnline: false,
+          status: initStatus, guia: "", tipoEnvio: null,
+          historial: { [initStatus]: firebase.firestore.FieldValue.serverTimestamp() },
           createdAt: firebase.firestore.FieldValue.serverTimestamp(),
           updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
         });
@@ -996,16 +1162,19 @@ async function saveOrder(e) {
       upsertClientLocal(cliente, existingId);
       if (editingOrderId) {
         const i = ORDERS.findIndex(o => o.id === editingOrderId);
-        if (i >= 0) ORDERS[i] = { ...ORDERS[i], productName, valor, cliente,
-          updatedAt: Date.now(), ...(fotoURL ? { fotoURL } : {}) };
+        if (i >= 0) {
+          const inCompra = ORDERS[i].status === "por_comprar_online" || ORDERS[i].status === "por_comprar_tienda";
+          ORDERS[i] = { ...ORDERS[i], productName, valor, cliente, tipoCompra, costoUsd,
+            updatedAt: Date.now(), ...(fotoURL ? { fotoURL } : {}), ...(inCompra ? { status: initStatus } : {}) };
+        }
       } else {
         const abonos = abonoIni > 0 ? [{ monto: abonoIni, fecha: Date.now() }] : [];
         ORDERS.unshift({
           id: newLocalId(),
           productName, valor, cliente, fotoURL: fotoURL || null,
-          abonos, abono: abonoIni,
-          status: "por_comprar", guia: "", tipoEnvio: null,
-          historial: { por_comprar: Date.now() },
+          abonos, abono: abonoIni, tipoCompra, costoUsd, compradoOnline: false,
+          status: initStatus, guia: "", tipoEnvio: null,
+          historial: { [initStatus]: Date.now() },
           createdAt: Date.now(), updatedAt: Date.now(),
         });
       }
@@ -1115,18 +1284,18 @@ function renderClientsTable() {
           <td>${escapeHtml(c.barrio || "")}</td>
           <td>${escapeHtml(c.ciudad || "")}</td>
           <td>${escapeHtml(c.departamento || c.municipio || "")}</td>
-          <td><button class="mini-btn ver" data-ver="${escapeHtml(c.nombre)}">Ver (${pedidos})</button></td>
+          <td><button class="mini-btn ver" data-ver="${c.numero}">Ver (${pedidos})</button></td>
           ${isAdmin ? `<td><button class="mini-btn" data-del="${c.id}">Eliminar</button></td>` : ""}
         </tr>`; }).join("")}
       </tbody>
     </table>`;
 
-  // Ver pedidos del cliente → filtra el tablero por su nombre
+  // Ver pedidos del cliente → filtra el tablero por su N° de cliente
   document.querySelectorAll("[data-ver]").forEach(b =>
     b.addEventListener("click", () => {
+      clientFilter = Number(b.dataset.ver);
       showView("tablero");
-      const s = document.getElementById("searchOrders");
-      s.value = b.dataset.ver; renderBoard();
+      renderBoard();
     }));
 
   document.querySelectorAll("[data-del]").forEach(b =>
@@ -1357,12 +1526,14 @@ function renderDashboard() {
   const entregados = orders.filter(o => o.status === "entregado");
   const valorEntregado = entregados.reduce((a, o) => a + (o.valor || 0), 0);
   const porCobrarTotal = orders.reduce((a, o) => a + Math.max(0, saldoDe(o)), 0);
+  const invertidoUsd = orders.reduce((a, o) => a + (Number(o.costoUsd) || 0), 0);
 
   statsEl.innerHTML = `
     <div class="stat money"><div class="num">${COP(recaudado)}</div><div class="lbl">Dinero recaudado</div></div>
     <div class="stat money"><div class="num">${COP(enProceso)}</div><div class="lbl">Dinero en proceso (saldo activos)</div></div>
     <div class="stat money"><div class="num">${COP(porCobrarTotal)}</div><div class="lbl">Total por cobrar</div></div>
     <div class="stat money"><div class="num">${COP(facturado)}</div><div class="lbl">Total facturado</div></div>
+    <div class="stat money"><div class="num">${USD(invertidoUsd)}</div><div class="lbl">Invertido en productos (USD)</div></div>
     <div class="stat"><div class="num">${orders.length}</div><div class="lbl">Pedidos (en el rango)</div></div>
     <div class="stat"><div class="num">${entregados.length}</div><div class="lbl">Entregados exitosamente</div></div>
     <div class="stat money"><div class="num">${COP(valorEntregado)}</div><div class="lbl">Valor de entregados</div></div>`;
@@ -1408,7 +1579,8 @@ function orderRows(list) {
     const c = o.cliente || {}; const saldo = saldoDe(o);
     return {
       "N° cliente": c.numero, Producto: o.productName, Estado: statusLabel(o.status),
-      Valor: o.valor || 0, Abonado: abonoTotal(o), Saldo: Math.max(0, saldo),
+      "Tipo compra": o.tipoCompra === "online" ? "Online" : "Tienda",
+      Valor: o.valor || 0, "Costo USD": o.costoUsd || 0, Abonado: abonoTotal(o), Saldo: Math.max(0, saldo),
       "Guía EE.UU.": o.guiaUsa || "",
       "Tipo envío": o.tipoEnvio === "domicilio" ? "Domicilio" : (o.tipoEnvio ? "Interrapidísimo" : ""),
       "Guía Colombia": o.guia || "", Cliente: c.nombre, Teléfono: c.telefono, "Red social": c.red || "",
@@ -1476,8 +1648,43 @@ function invoiceTicket(o) {
     </div>`;
 }
 
-function invoiceDoc(o) {
-  const ticket = invoiceTicket(o);
+// Factura con VARIOS productos de un mismo cliente (para el proceso "Despachado")
+function invoiceTicketMulti(orders, c) {
+  const prodRows = orders.map(o => `
+    <div class="ln"><span>${escapeHtml(o.productName)}</span><span>${COP(o.valor)}</span></div>
+    <div class="ln sub"><span>Abonado / saldo</span><span>${COP(abonoTotal(o))} / ${COP(Math.max(0, saldoDe(o)))}</span></div>`).join("");
+  const tV = orders.reduce((a, o) => a + (o.valor || 0), 0);
+  const tA = orders.reduce((a, o) => a + abonoTotal(o), 0);
+  const tS = orders.reduce((a, o) => a + Math.max(0, saldoDe(o)), 0);
+  return `
+    <div class="ticket">
+      <div class="logo">${LOGO_SVG}</div>
+      <div class="brand">ARMADIUSA</div>
+      <div class="tag">PERSONAL SHOPPER</div>
+      <div class="rule"></div>
+      <div class="chdr">PRODUCTOS (${orders.length})</div>
+      ${prodRows}
+      <div class="rule"></div>
+      <div class="ln"><span>Total productos</span><span>${COP(tV)}</span></div>
+      <div class="ln"><span>Total abonado</span><span>${COP(tA)}</span></div>
+      <div class="ln strong"><span>SALDO PENDIENTE</span><span>${COP(tS)}</span></div>
+      <div class="rule"></div>
+      <div class="chdr">CLIENTE</div>
+      <div class="cl"><b>${escapeHtml(c.nombre || "")}</b>${c.numero ? " · #" + c.numero : ""}</div>
+      <div class="cl">Tel: ${escapeHtml(c.telefono || "")}</div>
+      <div class="cl">${escapeHtml(c.direccion || "")}</div>
+      <div class="cl">Barrio: ${escapeHtml(c.barrio || "")}</div>
+      ${c.referencia ? `<div class="cl">Ref: ${escapeHtml(c.referencia)}</div>` : ""}
+      <div class="cl">${escapeHtml(c.ciudad || "")} — ${escapeHtml(c.departamento || c.municipio || "")}</div>
+      <div class="rule"></div>
+      <div class="foot">
+        <div class="fr">${IG_SVG}<span>@Armadiusa</span></div>
+        <div class="fr">${WA_SVG}<span>+1 (726) 219-5663</span></div>
+      </div>
+    </div>`;
+}
+
+function invoiceDocWrap(inner) {
   return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Factura</title><style>
     *{box-sizing:border-box;} html,body{margin:0;padding:0;}
     @page{ size:80mm auto; margin:0; }
@@ -1492,19 +1699,18 @@ function invoiceDoc(o) {
     .rule{ border-top:1px dashed #000; margin:2.4mm 0; }
     .prod{ font-weight:700; font-size:11pt; text-align:center; margin-bottom:2mm; }
     .ln{ display:flex; justify-content:space-between; gap:4mm; font-size:9pt; padding:0.6mm 0; }
+    .ln.sub{ font-size:7.5pt; padding:0 0 1mm; }
     .ln.strong{ font-weight:800; font-size:10.5pt; border-top:1px solid #000; margin-top:1mm; padding-top:1.4mm; }
     .chdr{ font-weight:800; font-size:8pt; letter-spacing:1px; margin-bottom:1mm; }
     .cl{ font-size:9pt; padding:0.4mm 0; }
     .foot{ margin-top:1.5mm; }
     .fr{ display:flex; align-items:center; justify-content:center; gap:2mm; font-size:9.5pt; padding:0.6mm 0; }
     .fr svg{ width:4.2mm; height:4.2mm; }
-  </style></head><body>${ticket}${ticket}</body></html>`;
+  </style></head><body>${inner}</body></html>`;
 }
 
-// Imprime SIEMPRE 2 facturas por separado (2 copias) en una impresora térmica de 80 mm.
-function printInvoice(id) {
-  const o = ORDERS.find(x => x.id === id);
-  if (!o) return;
+// Imprime en impresora térmica de 80 mm (2 copias por separado)
+function printDoc(inner) {
   const ifr = document.createElement("iframe");
   ifr.style.cssText = "position:fixed;right:0;bottom:0;width:0;height:0;border:0;";
   document.body.appendChild(ifr);
@@ -1512,7 +1718,23 @@ function printInvoice(id) {
     try { ifr.contentWindow.focus(); ifr.contentWindow.print(); } catch (e) { alert("No se pudo imprimir: " + e.message); }
     setTimeout(() => ifr.remove(), 1500);
   };
-  ifr.srcdoc = invoiceDoc(o);
+  ifr.srcdoc = invoiceDocWrap(inner);
+}
+
+function printInvoice(id) {
+  const o = ORDERS.find(x => x.id === id);
+  if (!o) return;
+  const t = invoiceTicket(o);
+  printDoc(t + t);
+}
+
+// Factura de TODOS los productos de un cliente en "Despachado"
+function printInvoiceClient(numero) {
+  const orders = ORDERS.filter(o => o.status === "enviado_col"
+    && String((o.cliente || {}).numero) === String(numero) && !isArchived(o));
+  if (!orders.length) { alert("Ese cliente no tiene productos en Despachado."); return; }
+  const t = invoiceTicketMulti(orders, orders[0].cliente || {});
+  printDoc(t + t);
 }
 
 /* ============================================================
