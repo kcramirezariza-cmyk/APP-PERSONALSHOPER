@@ -14,7 +14,7 @@ const STATUSES = [
   { key: "por_comprar",  label: "Por comprar",  color: "#a1a1aa" },
   { key: "por_empacar",  label: "Por empacar",  color: "#8b8b93" },
   { key: "por_enviar",   label: "Por enviar",   color: "#71717a" },
-  { key: "enviado",      label: "Enviado (a Col)", color: "#5c5c64" },
+  { key: "enviado",      label: "Despachado",   color: "#5c5c64" },
   { key: "recibido_col", label: "Recibido Col", color: "#46464d" },
   { key: "enviado_col",  label: "Enviado Col",  color: "#2f2f35" },
   { key: "entregado",    label: "Entregado",    color: "#18181b" },
@@ -303,9 +303,26 @@ function getFilteredOrders() {
     if (!q) return true;
     const c = o.cliente || {};
     const hay = [o.productName, c.nombre, "#" + c.numero, c.ciudad, c.departamento,
-      o.guia, c.telefono].filter(Boolean).join(" ").toLowerCase();
+      o.guia, o.guiaUsa, c.telefono].filter(Boolean).join(" ").toLowerCase();
     return hay.includes(q);
   });
+}
+
+// En Despachado y Recibido Col se agrupan las órdenes que comparten guía de
+// EE.UU. (van en la misma caja). En el resto de columnas se listan sueltas.
+function colBodyHTML(list, statusKey) {
+  if (statusKey === "enviado" || statusKey === "recibido_col") {
+    const groups = {}; const solos = [];
+    list.forEach(o => { if (o.guiaUsa) (groups[o.guiaUsa] = groups[o.guiaUsa] || []).push(o); else solos.push(o); });
+    let html = Object.keys(groups).map(g => `
+      <div class="box-group">
+        <div class="box-group-head">📦 Caja ${escapeHtml(g)} <span>${groups[g].length}</span></div>
+        ${groups[g].map(cardHTML).join("")}
+      </div>`).join("");
+    html += solos.map(cardHTML).join("");
+    return html || `<div class="col-empty">—</div>`;
+  }
+  return list.map(cardHTML).join("") || `<div class="col-empty">—</div>`;
 }
 
 function renderBoard() {
@@ -321,7 +338,7 @@ function renderBoard() {
           <span class="count">${list.length}</span>
         </div>
         <div class="col-body">
-          ${list.map(cardHTML).join("") || `<div class="col-empty">—</div>`}
+          ${colBodyHTML(list, s.key)}
         </div>
       </div>`;
   }).join("");
@@ -352,6 +369,7 @@ function cardHTML(o) {
           ${paid ? "Pagado ✓" : "Debe " + COP(saldo)}
         </span>
       </div>
+      ${o.guiaUsa ? `<div class="guia">📦 EE.UU.: ${escapeHtml(o.guiaUsa)}</div>` : ""}
       ${o.guia ? `<div class="guia">Guía: ${escapeHtml(o.guia)}</div>`
         : (o.tipoEnvio === "domicilio" ? `<div class="guia">Domicilio</div>` : "")}
     </div>`;
@@ -418,6 +436,19 @@ function openOrderModal(id) {
   let advanceUI = "";
   if (o.status === "entregado") {
     advanceUI = `<span class="badge done">✓ Proceso completo</span>`;
+  } else if (o.status === "por_enviar") {
+    // Paso a "Despachado": guía de la transportadora de EE.UU. (BoxExpress), opcional
+    const guides = [...new Set(ORDERS.map(x => x.guiaUsa).filter(Boolean))];
+    advanceUI = `
+      <div style="width:100%">
+        <div class="detail-section-title">Guía transportadora EE.UU. (BoxExpress)</div>
+        <div class="guia-input-row">
+          <input type="text" id="guiaUsaInput" list="guiaUsaList" placeholder="N° de guía BoxExpress (opcional)" value="${escapeHtml(o.guiaUsa || "")}" />
+          <button class="btn-primary" id="advanceBtn">Marcar Despachado →</button>
+        </div>
+        <datalist id="guiaUsaList">${guides.map(g => `<option value="${escapeHtml(g)}"></option>`).join("")}</datalist>
+        <span class="file-note">Si varios productos van en la misma caja, usa el mismo número: se agruparán juntos.</span>
+      </div>`;
   } else if (o.status === "recibido_col") {
     // Paso a "Enviado Col": elegir tipo de envío; guía opcional
     advanceUI = `
@@ -464,8 +495,9 @@ function openOrderModal(id) {
     ${c.referencia ? `<div class="detail-row"><span class="k">Referencia</span><span>${escapeHtml(c.referencia)}</span></div>` : ""}
     <div class="detail-row"><span class="k">Ciudad</span><span>${escapeHtml(c.ciudad)}</span></div>
     <div class="detail-row"><span class="k">Departamento</span><span>${escapeHtml(c.departamento || c.municipio || "")}</span></div>
+    ${o.guiaUsa ? `<div class="detail-row"><span class="k">Guía EE.UU. (BoxExpress)</span><span>${escapeHtml(o.guiaUsa)}</span></div>` : ""}
     ${envioInfo}
-    ${o.guia ? `<div class="detail-row"><span class="k">Guía</span><span>${escapeHtml(o.guia)}</span></div>` : ""}
+    ${o.guia ? `<div class="detail-row"><span class="k">Guía Colombia</span><span>${escapeHtml(o.guia)}</span></div>` : ""}
 
     <div class="detail-section-title">Recorrido</div>
     <div class="timeline">${timeline}</div>
@@ -520,7 +552,10 @@ async function advanceStatus(o) {
   const next = STATUSES[idx + 1];
   if (!next) return;
 
-  let guia = null, tipoEnvio = null;
+  let guia = null, tipoEnvio = null, guiaUsa = null;
+  if (next.key === "enviado") {
+    guiaUsa = (document.getElementById("guiaUsaInput")?.value || "").trim();  // opcional
+  }
   if (next.key === "enviado_col") {
     const t = document.querySelector("input[name='tipoEnvio']:checked");
     tipoEnvio = t ? t.value : "interrapidisimo";
@@ -533,6 +568,7 @@ async function advanceStatus(o) {
       ORDERS[i].status = next.key;
       ORDERS[i].updatedAt = Date.now();
       ORDERS[i].historial = { ...(ORDERS[i].historial || {}), [next.key]: Date.now() };
+      if (guiaUsa) ORDERS[i].guiaUsa = guiaUsa;
       if (tipoEnvio) ORDERS[i].tipoEnvio = tipoEnvio;
       if (guia) { ORDERS[i].guia = guia; ORDERS[i].rastreoActivo = tipoEnvio === "interrapidisimo"; }
     }
@@ -545,6 +581,7 @@ async function advanceStatus(o) {
     updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
     [`historial.${next.key}`]: firebase.firestore.FieldValue.serverTimestamp(),
   };
+  if (guiaUsa) update.guiaUsa = guiaUsa;
   if (tipoEnvio) update.tipoEnvio = tipoEnvio;
   if (guia) { update.guia = guia; update.rastreoActivo = tipoEnvio === "interrapidisimo"; }
 
@@ -1004,8 +1041,9 @@ function orderRows(list) {
     return {
       "N° cliente": c.numero, Producto: o.productName, Estado: statusLabel(o.status),
       Valor: o.valor || 0, Abonado: abonoTotal(o), Saldo: Math.max(0, saldo),
+      "Guía EE.UU.": o.guiaUsa || "",
       "Tipo envío": o.tipoEnvio === "domicilio" ? "Domicilio" : (o.tipoEnvio ? "Interrapidísimo" : ""),
-      Guía: o.guia || "", Cliente: c.nombre, Teléfono: c.telefono, "Red social": c.red || "",
+      "Guía Colombia": o.guia || "", Cliente: c.nombre, Teléfono: c.telefono, "Red social": c.red || "",
       Dirección: c.direccion, Barrio: c.barrio, Referencia: c.referencia || "",
       Ciudad: c.ciudad, Departamento: c.departamento || c.municipio || "",
       Creada: fmtDate(o.createdAt), Entregada: o.historial && o.historial.entregado ? fmtDate(o.historial.entregado) : "",

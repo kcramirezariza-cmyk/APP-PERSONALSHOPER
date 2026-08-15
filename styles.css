@@ -373,6 +373,24 @@ td .mini-btn:hover { color: #fff; background: var(--red); border-color: var(--re
 .badge.done { background: var(--panel); color: var(--text); border: 1px solid var(--line-strong); }
 
 /* ===================== ELEMENTOS NUEVOS ===================== */
+/* Agrupación de productos en la misma caja (guía de EE.UU.) */
+.box-group {
+  border: 1px dashed var(--line-strong);
+  border-radius: 10px;
+  padding: 8px;
+  background: var(--bg-soft);
+  display: flex; flex-direction: column; gap: 8px;
+}
+.box-group-head {
+  font-size: 12px; font-weight: 700; color: var(--text);
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 2px 2px 6px; border-bottom: 1px solid var(--line);
+}
+.box-group-head span {
+  background: var(--accent); color: #fff; font-size: 11px;
+  padding: 1px 8px; border-radius: 20px;
+}
+
 .col-empty { color: var(--muted-2); font-size: 12px; padding: 8px; text-align: center; }
 .empty-box { padding: 26px; text-align: center; color: var(--muted); background: var(--card);
   border: 1px solid var(--line); border-radius: 12px; }
