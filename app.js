@@ -705,6 +705,11 @@ function openOrderModal(id) {
       <button class="btn-primary" id="addAbonoBtn">Abonar</button>
     </div>` : "";
 
+  // Casilla de costo (USD) — se captura al avanzar a "Por empacar" (solo admin)
+  const costInput = isAdmin ? `
+    <div class="detail-section-title">Costo del producto (USD) — contabilidad</div>
+    <input type="text" inputmode="decimal" id="costoAdvInput" class="cost-adv" placeholder="Costo en dólares (US$)" value="${o.costoUsd || ""}" />` : "";
+
   // Avance de estado
   let advanceUI = "";
   if (o.status === "entregado") {
@@ -715,9 +720,18 @@ function openOrderModal(id) {
       advanceUI = `<button class="btn-primary" id="compradoBtn">✅ Marcar como comprado</button>`;
     } else {
       advanceUI = `
-        <span class="badge done" style="margin-right:6px">✅ Comprado</span>
-        <button class="btn-primary" id="advanceBtn">📦 Confirmar recibido físico → Por empacar</button>`;
+        <div style="width:100%">
+          <span class="badge done" style="display:inline-block;margin-bottom:6px">✅ Comprado</span>
+          ${costInput}
+          <button class="btn-primary" id="advanceBtn">📦 Confirmar recibido físico → Por empacar</button>
+        </div>`;
     }
+  } else if (o.status === "por_comprar_tienda") {
+    advanceUI = `
+      <div style="width:100%">
+        ${costInput}
+        <button class="btn-primary" id="advanceBtn">Avanzar a: Por empacar →</button>
+      </div>`;
   } else if (o.status === "por_enviar") {
     // Paso a "Despachado": guía de la transportadora de EE.UU. (BoxExpress), opcional
     const guides = [...new Set(ORDERS.map(x => x.guiaUsa).filter(Boolean))];
@@ -749,15 +763,6 @@ function openOrderModal(id) {
     advanceUI = `<button class="btn-primary" id="advanceBtn">Avanzar a: ${statusLabel(nextKey)} →</button>`;
   }
 
-  // Casilla de costo del producto en USD (solo en las etapas de compra)
-  const enCompra = o.status === "por_comprar_online" || o.status === "por_comprar_tienda";
-  const costoUI = (enCompra && isAdmin) ? `
-    <div class="detail-section-title">Costo del producto (USD)</div>
-    <div class="guia-input-row">
-      <input type="text" inputmode="decimal" id="costoUsdInput" placeholder="Costo en dólares (US$)" value="${o.costoUsd || ""}" />
-      <button class="btn-secondary" id="saveCostoBtn">Guardar costo</button>
-    </div>` : "";
-
   const envioInfo = o.tipoEnvio
     ? `<div class="detail-row"><span class="k">Tipo de envío</span><span>${o.tipoEnvio === "domicilio" ? "Domicilio" : "Interrapidísimo"}</span></div>`
     : "";
@@ -775,7 +780,6 @@ function openOrderModal(id) {
       <span style="color:${saldo > 0 ? "var(--amber)" : "var(--green)"};font-weight:700">
         ${saldo > 0 ? COP(saldo) : "Pagado ✓"}</span></div>
     ${abonoAddUI}
-    ${costoUI}
 
     <div class="detail-section-title">Cliente</div>
     <div class="detail-row"><span class="k">N° de cliente</span><span>${c.numero ? "#" + c.numero : "—"}</span></div>
@@ -810,8 +814,6 @@ function openOrderModal(id) {
   if (advBtn) advBtn.addEventListener("click", () => advanceStatus(o));
   const compradoBtn = document.getElementById("compradoBtn");
   if (compradoBtn) compradoBtn.addEventListener("click", () => marcarComprado(o.id));
-  const saveCostoBtn = document.getElementById("saveCostoBtn");
-  if (saveCostoBtn) saveCostoBtn.addEventListener("click", () => guardarCosto(o.id));
   const backBtn = document.getElementById("backBtn");
   if (backBtn) backBtn.addEventListener("click", () => regresarStatus(o));
   const printBtn = document.getElementById("printBtn");
@@ -857,7 +859,11 @@ async function advanceStatus(o) {
   const next = nextStatus(o);
   if (!next) return;
 
-  let guia = null, tipoEnvio = null, guiaUsa = null;
+  let guia = null, tipoEnvio = null, guiaUsa = null, costoUsd = null;
+  if (next === "por_empacar") {
+    const cv = document.getElementById("costoAdvInput");
+    if (cv) costoUsd = Number((cv.value || "").replace(/[^0-9.]/g, "")) || 0;
+  }
   if (next === "enviado") {
     guiaUsa = (document.getElementById("guiaUsaInput")?.value || "").trim();  // opcional
   }
@@ -873,6 +879,7 @@ async function advanceStatus(o) {
       ORDERS[i].status = next;
       ORDERS[i].updatedAt = Date.now();
       ORDERS[i].historial = { ...(ORDERS[i].historial || {}), [next]: Date.now() };
+      if (costoUsd != null) ORDERS[i].costoUsd = costoUsd;
       if (guiaUsa) ORDERS[i].guiaUsa = guiaUsa;
       if (tipoEnvio) ORDERS[i].tipoEnvio = tipoEnvio;
       if (guia) { ORDERS[i].guia = guia; ORDERS[i].rastreoActivo = tipoEnvio === "interrapidisimo"; }
@@ -886,6 +893,7 @@ async function advanceStatus(o) {
     updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
     [`historial.${next}`]: firebase.firestore.FieldValue.serverTimestamp(),
   };
+  if (costoUsd != null) update.costoUsd = costoUsd;
   if (guiaUsa) update.guiaUsa = guiaUsa;
   if (tipoEnvio) update.tipoEnvio = tipoEnvio;
   if (guia) { update.guia = guia; update.rastreoActivo = tipoEnvio === "interrapidisimo"; }
@@ -909,23 +917,6 @@ async function marcarComprado(id) {
       compradoOnline: true, updatedAt: firebase.firestore.FieldValue.serverTimestamp() });
     setTimeout(() => openOrderModal(id), 250);
   } catch (e) { alert("No se pudo marcar como comprado: " + e.message); }
-}
-
-// Guardar el costo del producto en USD
-async function guardarCosto(id) {
-  const raw = (document.getElementById("costoUsdInput")?.value || "").replace(/[^0-9.]/g, "");
-  const costoUsd = Number(raw) || 0;
-  if (!FIREBASE_READY) {
-    const i = ORDERS.findIndex(x => x.id === id);
-    if (i >= 0) { ORDERS[i].costoUsd = costoUsd; ORDERS[i].updatedAt = Date.now(); }
-    saveLocal(); renderAllLocal(); openOrderModal(id);
-    return;
-  }
-  try {
-    await db.collection("ordenes").doc(id).update({
-      costoUsd, updatedAt: firebase.firestore.FieldValue.serverTimestamp() });
-    setTimeout(() => openOrderModal(id), 250);
-  } catch (e) { alert("No se pudo guardar el costo: " + e.message); }
 }
 
 // Regresar el pedido al proceso anterior (solo admin)
@@ -1063,8 +1054,6 @@ function editOrder(id) {
   const tc = o.tipoCompra === "online" ? "online" : "tienda";
   const tcEl = document.querySelector(`input[name='tipoCompra'][value='${tc}']`);
   if (tcEl) tcEl.checked = true;
-  const costoEl = document.getElementById("costoUsdForm");
-  if (costoEl) costoEl.value = o.costoUsd || "";
   fillClient(o.cliente || {});
   // Al editar, reutiliza el mismo cliente del pedido (no crea uno nuevo)
   const oc = o.cliente || {};
@@ -1105,7 +1094,6 @@ async function saveOrder(e) {
   const file = document.getElementById("productPhoto").files[0];
   const tipoCompraEl = document.querySelector("input[name='tipoCompra']:checked");
   const tipoCompra = tipoCompraEl ? tipoCompraEl.value : null;
-  const costoUsd = Number((document.getElementById("costoUsdForm")?.value || "").replace(/[^0-9.]/g, "")) || 0;
 
   if (!productName || !cliente.nombre || !valor) {
     msg.className = "form-msg err"; msg.textContent = "Completa producto, valor y nombre del cliente.";
@@ -1141,7 +1129,7 @@ async function saveOrder(e) {
       await upsertClient(cliente, existingId);
       if (editingOrderId) {
         const cur = ORDERS.find(x => x.id === editingOrderId) || {};
-        const update = { productName, valor, cliente, tipoCompra, costoUsd,
+        const update = { productName, valor, cliente, tipoCompra,
           updatedAt: firebase.firestore.FieldValue.serverTimestamp() };
         if (fotoURL) update.fotoURL = fotoURL;
         // Si sigue en etapa de compra, sincroniza la columna con el tipo elegido
@@ -1151,7 +1139,7 @@ async function saveOrder(e) {
         const abonos = abonoIni > 0 ? [{ monto: abonoIni, fecha: Date.now() }] : [];
         await db.collection("ordenes").add({
           productName, valor, cliente, fotoURL: fotoURL || null,
-          abonos, abono: abonoIni, tipoCompra, costoUsd, compradoOnline: false,
+          abonos, abono: abonoIni, tipoCompra, costoUsd: 0, compradoOnline: false,
           status: initStatus, guia: "", tipoEnvio: null,
           historial: { [initStatus]: firebase.firestore.FieldValue.serverTimestamp() },
           createdAt: firebase.firestore.FieldValue.serverTimestamp(),
@@ -1164,7 +1152,7 @@ async function saveOrder(e) {
         const i = ORDERS.findIndex(o => o.id === editingOrderId);
         if (i >= 0) {
           const inCompra = ORDERS[i].status === "por_comprar_online" || ORDERS[i].status === "por_comprar_tienda";
-          ORDERS[i] = { ...ORDERS[i], productName, valor, cliente, tipoCompra, costoUsd,
+          ORDERS[i] = { ...ORDERS[i], productName, valor, cliente, tipoCompra,
             updatedAt: Date.now(), ...(fotoURL ? { fotoURL } : {}), ...(inCompra ? { status: initStatus } : {}) };
         }
       } else {
@@ -1172,7 +1160,7 @@ async function saveOrder(e) {
         ORDERS.unshift({
           id: newLocalId(),
           productName, valor, cliente, fotoURL: fotoURL || null,
-          abonos, abono: abonoIni, tipoCompra, costoUsd, compradoOnline: false,
+          abonos, abono: abonoIni, tipoCompra, costoUsd: 0, compradoOnline: false,
           status: initStatus, guia: "", tipoEnvio: null,
           historial: { [initStatus]: Date.now() },
           createdAt: Date.now(), updatedAt: Date.now(),

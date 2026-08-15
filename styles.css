@@ -403,6 +403,13 @@ td .mini-btn:hover { color: #fff; background: var(--red); border-color: var(--re
 }
 .wa-btn:hover { background: #1eb457; }
 
+/* Campo de costo (USD) dentro del avance */
+.cost-adv {
+  width: 100%; background: var(--bg); border: 1px solid var(--line-strong); color: var(--text);
+  padding: 9px 12px; border-radius: 9px; font-size: 13px; font-family: inherit; margin-bottom: 8px;
+}
+.cost-adv:focus { outline: 2px solid var(--accent); border-color: transparent; }
+
 /* Botón de factura en grupo de cliente */
 .box-invoice {
   background: transparent; border: none; color: var(--muted);
