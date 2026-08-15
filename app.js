@@ -806,9 +806,17 @@ function setupOrderForm() {
     wrap.classList.remove("hidden");
   });
 
-  document.getElementById("clientSearch").addEventListener("change", e => {
-    const cli = CLIENTS.find(c => c.nombre === e.target.value);
-    if (cli) fillClient(cli);
+  // Combobox de clientes: desplegable + búsqueda en la misma barra
+  const cs = document.getElementById("clientSearch");
+  cs.addEventListener("focus", () => renderClientCombo(cs.value));
+  cs.addEventListener("input", () => renderClientCombo(cs.value));
+  cs.addEventListener("keydown", e => {
+    if (e.key === "Escape") document.getElementById("clientComboList").classList.add("hidden");
+  });
+  document.addEventListener("click", e => {
+    const combo = document.getElementById("clientCombo");
+    if (combo && !combo.contains(e.target))
+      document.getElementById("clientComboList").classList.add("hidden");
   });
 
   document.getElementById("cancelOrderBtn").addEventListener("click", () => {
@@ -1001,9 +1009,39 @@ function upsertClientLocal(cliente) {
   CLIENTS.sort((a, b) => (Number(a.numero) || 0) - (Number(b.numero) || 0));
 }
 
+// Combobox de clientes: muestra la lista y filtra por lo que se escribe
+function renderClientCombo(filter) {
+  const box = document.getElementById("clientComboList");
+  if (!box) return;
+  const q = (filter || "").toLowerCase().trim();
+  const list = CLIENTS.filter(c => !q ||
+    [c.nombre, "#" + c.numero, c.telefono, c.ciudad].filter(Boolean).join(" ").toLowerCase().includes(q));
+
+  if (!list.length) {
+    box.innerHTML = `<div class="combo-empty">Sin coincidencias — se guardará como cliente nuevo</div>`;
+  } else {
+    box.innerHTML = list.map(c => `
+      <div class="combo-item" data-id="${c.id}">
+        <span class="ci-num">#${c.numero ?? "—"}</span>
+        <span class="ci-name">${escapeHtml(c.nombre)}</span>
+        <span class="ci-city">${escapeHtml(c.ciudad || "")}</span>
+      </div>`).join("");
+  }
+  box.classList.remove("hidden");
+  box.querySelectorAll(".combo-item").forEach(el =>
+    el.addEventListener("click", () => {
+      const c = CLIENTS.find(x => x.id === el.dataset.id);
+      if (c) { fillClient(c); document.getElementById("clientSearch").value = c.nombre; }
+      box.classList.add("hidden");
+    }));
+}
+
+// Mantiene el combo al día si cambian los clientes mientras está abierto
 function renderClientDatalist() {
-  document.getElementById("clientList").innerHTML =
-    CLIENTS.map(c => `<option value="${escapeHtml(c.nombre)}"></option>`).join("");
+  const box = document.getElementById("clientComboList");
+  if (box && !box.classList.contains("hidden")) {
+    renderClientCombo(document.getElementById("clientSearch").value);
+  }
 }
 
 function renderClientsTable() {

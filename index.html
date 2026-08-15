@@ -90,11 +90,14 @@
 
           <fieldset>
             <legend>Cliente</legend>
-            <label>Buscar cliente existente
-              <input type="text" id="clientSearch" list="clientList" placeholder="Escribe el nombre para autocompletar…" />
-              <datalist id="clientList"></datalist>
-              <span class="file-note">Si no existe, llena los datos y se guardará como cliente nuevo (con su N° de cliente).</span>
-            </label>
+            <div class="field">
+              <span class="field-cap">Buscar cliente existente</span>
+              <div class="combo" id="clientCombo">
+                <input type="text" id="clientSearch" autocomplete="off" placeholder="Escribe o despliega ▾ para buscar un cliente…" />
+                <div class="combo-list hidden" id="clientComboList"></div>
+              </div>
+              <span class="file-note">Selecciona uno para autocompletar sus datos. Si no existe, llénalos y se guardará como cliente nuevo (con su N° de cliente).</span>
+            </div>
             <div class="grid-2">
               <label>Nombre *
                 <input type="text" id="cNombre" required />

@@ -373,6 +373,31 @@ td .mini-btn:hover { color: #fff; background: var(--red); border-color: var(--re
 .badge.done { background: var(--panel); color: var(--text); border: 1px solid var(--line-strong); }
 
 /* ===================== ELEMENTOS NUEVOS ===================== */
+/* Combobox de clientes (desplegable + búsqueda) */
+.field { display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: var(--muted); margin-bottom: 12px; }
+.field-cap { color: var(--muted); }
+.combo { position: relative; width: 100%; }
+.combo > input {
+  width: 100%; background: var(--bg); border: 1px solid var(--line-strong);
+  color: var(--text); padding: 10px 12px; border-radius: 9px; font-size: 14px; font-family: inherit;
+}
+.combo > input:focus { outline: 2px solid var(--accent); border-color: transparent; }
+.combo-list {
+  position: absolute; top: calc(100% + 4px); left: 0; right: 0; z-index: 40;
+  background: var(--card); border: 1px solid var(--line-strong); border-radius: 10px;
+  max-height: 240px; overflow-y: auto; box-shadow: var(--shadow);
+}
+.combo-item {
+  display: flex; align-items: center; gap: 10px; padding: 9px 12px;
+  cursor: pointer; font-size: 13px; border-bottom: 1px solid var(--line);
+}
+.combo-item:last-child { border-bottom: none; }
+.combo-item:hover { background: var(--bg-soft); }
+.ci-num { color: var(--muted); font-weight: 700; min-width: 36px; }
+.ci-name { flex: 1; color: var(--text); font-weight: 600; }
+.ci-city { color: var(--muted); font-size: 12px; }
+.combo-empty { padding: 11px 12px; color: var(--muted); font-size: 12.5px; }
+
 /* Modo "armar caja" en Por enviar */
 .box-toggle {
   width: 100%; background: var(--card); border: 1px dashed var(--line-strong);
