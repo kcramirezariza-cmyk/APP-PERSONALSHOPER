@@ -14,9 +14,9 @@ const STATUSES = [
   { key: "por_comprar",  label: "Por comprar",  color: "#a1a1aa" },
   { key: "por_empacar",  label: "Por empacar",  color: "#8b8b93" },
   { key: "por_enviar",   label: "Por enviar",   color: "#71717a" },
-  { key: "enviado",      label: "Despachado",   color: "#5c5c64" },
+  { key: "enviado",      label: "Enviado a Col", color: "#5c5c64" },
   { key: "recibido_col", label: "Recibido Col", color: "#46464d" },
-  { key: "enviado_col",  label: "Enviado Col",  color: "#2f2f35" },
+  { key: "enviado_col",  label: "Despachado",   color: "#2f2f35" },
   { key: "entregado",    label: "Entregado",    color: "#18181b" },
 ];
 const STATUS_MAP = Object.fromEntries(STATUSES.map(s => [s.key, s]));
@@ -444,7 +444,7 @@ function openOrderModal(id) {
         <div class="detail-section-title">Guía transportadora EE.UU. (BoxExpress)</div>
         <div class="guia-input-row">
           <input type="text" id="guiaUsaInput" list="guiaUsaList" placeholder="N° de guía BoxExpress (opcional)" value="${escapeHtml(o.guiaUsa || "")}" />
-          <button class="btn-primary" id="advanceBtn">Marcar Despachado →</button>
+          <button class="btn-primary" id="advanceBtn">Marcar ${statusLabel("enviado")} →</button>
         </div>
         <datalist id="guiaUsaList">${guides.map(g => `<option value="${escapeHtml(g)}"></option>`).join("")}</datalist>
         <span class="file-note">Si varios productos van en la misma caja, usa el mismo número: se agruparán juntos.</span>
@@ -460,7 +460,7 @@ function openOrderModal(id) {
         </div>
         <div class="guia-input-row" style="margin-top:8px">
           <input type="text" id="guiaInput" placeholder="N° de guía (opcional)" value="${escapeHtml(o.guia || "")}" />
-          <button class="btn-primary" id="advanceBtn">Marcar Enviado Col →</button>
+          <button class="btn-primary" id="advanceBtn">Marcar ${statusLabel("enviado_col")} →</button>
         </div>
       </div>`;
   } else {
@@ -504,6 +504,8 @@ function openOrderModal(id) {
 
     <div class="modal-actions">
       ${advanceUI}
+      ${o.status === "enviado_col" ? `<button class="btn-secondary" id="printBtn">🧾 Imprimir factura</button>` : ""}
+      ${isAdmin && idx > 0 ? `<button class="btn-ghost" id="backBtn">← Regresar proceso</button>` : ""}
       ${isAdmin ? `<button class="btn-secondary" id="editOrderBtn">✎ Editar</button>` : ""}
       ${isAdmin ? `<button class="btn-ghost" id="deleteOrderBtn" style="color:var(--red);border-color:var(--red)">Eliminar</button>` : ""}
     </div>`;
@@ -512,6 +514,10 @@ function openOrderModal(id) {
 
   const advBtn = document.getElementById("advanceBtn");
   if (advBtn) advBtn.addEventListener("click", () => advanceStatus(o));
+  const backBtn = document.getElementById("backBtn");
+  if (backBtn) backBtn.addEventListener("click", () => regresarStatus(o));
+  const printBtn = document.getElementById("printBtn");
+  if (printBtn) printBtn.addEventListener("click", () => printInvoice(o.id));
   const addAb = document.getElementById("addAbonoBtn");
   if (addAb) addAb.addEventListener("click", () => addAbono(o.id));
   const nuevoAb = document.getElementById("nuevoAbono");
@@ -589,6 +595,27 @@ async function advanceStatus(o) {
     await db.collection("ordenes").doc(o.id).update(update);
     closeModal();
   } catch (e) { alert("No se pudo actualizar: " + e.message); }
+}
+
+// Regresar el pedido al proceso anterior (solo admin)
+async function regresarStatus(o) {
+  const idx = statusIndex(o.status);
+  if (idx <= 0) return;
+  const prev = STATUSES[idx - 1];
+  if (!confirm(`¿Regresar este pedido a "${prev.label}"?`)) return;
+
+  if (!FIREBASE_READY) {
+    const i = ORDERS.findIndex(x => x.id === o.id);
+    if (i >= 0) { ORDERS[i].status = prev.key; ORDERS[i].updatedAt = Date.now(); }
+    saveLocal(); renderAllLocal(); closeModal();
+    return;
+  }
+  try {
+    await db.collection("ordenes").doc(o.id).update({
+      status: prev.key, updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+    });
+    closeModal();
+  } catch (e) { alert("No se pudo regresar: " + e.message); }
 }
 
 async function deleteOrder(id) {
@@ -1066,6 +1093,86 @@ function downloadXlsx(rows, sheet, name) {
   XLSX.writeFile(wb, name + ".xlsx");
 }
 const hoy = () => new Date().toISOString().slice(0, 10);
+
+/* ============================================================
+   FACTURA TÉRMICA 80 mm (impresora térmica, 1 tinta / negro)
+   ============================================================ */
+const LOGO_SVG = `<svg viewBox="0 0 120 132" xmlns="http://www.w3.org/2000/svg"><g stroke="#000" stroke-width="7" stroke-linecap="round" stroke-linejoin="round" fill="none"><path d="M22 112 L60 34"/><path d="M98 112 L60 34"/><path d="M35 86 L85 86"/><path d="M60 34 C60 22 55 12 66 11 C77 10 77 27 63 26"/></g></svg>`;
+const IG_SVG = `<svg viewBox="0 0 24 24" fill="none" stroke="#000" stroke-width="2"><rect x="2.5" y="2.5" width="19" height="19" rx="5"/><circle cx="12" cy="12" r="4.3"/><circle cx="17.4" cy="6.6" r="1.1" fill="#000" stroke="none"/></svg>`;
+const WA_SVG = `<svg viewBox="0 0 24 24" fill="#000"><path d="M12.04 2c-5.46 0-9.91 4.45-9.91 9.91 0 1.75.46 3.45 1.32 4.95L2 22l5.25-1.38c1.45.79 3.08 1.21 4.79 1.21 5.46 0 9.91-4.45 9.91-9.91S17.5 2 12.04 2zm0 18.15c-1.53 0-3.02-.41-4.32-1.19l-.31-.18-3.2.84.85-3.12-.2-.32a8.2 8.2 0 0 1-1.26-4.37c0-4.54 3.7-8.24 8.25-8.24 2.2 0 4.27.86 5.83 2.42a8.19 8.19 0 0 1 2.41 5.83c0 4.55-3.7 8.25-8.25 8.25zm4.52-6.16c-.25-.12-1.47-.72-1.69-.81-.23-.08-.39-.12-.56.13-.16.25-.64.81-.79.97-.15.17-.29.19-.54.06-.25-.12-1.05-.39-1.99-1.23-.74-.66-1.23-1.47-1.38-1.72-.14-.25-.02-.38.11-.51.11-.11.25-.29.37-.43.13-.15.17-.25.25-.41.08-.17.04-.31-.02-.43-.06-.12-.56-1.34-.76-1.84-.2-.48-.4-.42-.56-.42h-.48a.92.92 0 0 0-.66.31c-.23.25-.87.85-.87 2.07 0 1.22.89 2.4 1.01 2.57.12.17 1.75 2.67 4.25 3.74.59.26 1.05.41 1.41.52.59.19 1.13.16 1.56.1.48-.07 1.47-.6 1.68-1.18.21-.58.21-1.07.14-1.18-.06-.11-.22-.17-.47-.29z"/></svg>`;
+
+function invoiceTicket(o) {
+  const c = o.cliente || {};
+  const abonos = getAbonos(o);
+  const abonosRows = abonos.map((a, i) =>
+    `<div class="ln"><span>Abono ${i + 1}</span><span>${COP(a.monto)}</span></div>`).join("");
+  const saldo = Math.max(0, saldoDe(o));
+  return `
+    <div class="ticket">
+      <div class="logo">${LOGO_SVG}</div>
+      <div class="brand">ARMADIUSA</div>
+      <div class="tag">PERSONAL SHOPPER</div>
+      <div class="rule"></div>
+      <div class="prod">${escapeHtml(o.productName)}</div>
+      <div class="ln"><span>Valor del producto</span><span>${COP(o.valor)}</span></div>
+      ${abonosRows}
+      <div class="ln"><span>Total abonado</span><span>${COP(abonoTotal(o))}</span></div>
+      <div class="ln strong"><span>SALDO PENDIENTE</span><span>${COP(saldo)}</span></div>
+      <div class="rule"></div>
+      <div class="chdr">CLIENTE</div>
+      <div class="cl"><b>${escapeHtml(c.nombre || "")}</b>${c.numero ? " · #" + c.numero : ""}</div>
+      <div class="cl">Tel: ${escapeHtml(c.telefono || "")}</div>
+      <div class="cl">${escapeHtml(c.direccion || "")}</div>
+      <div class="cl">Barrio: ${escapeHtml(c.barrio || "")}</div>
+      ${c.referencia ? `<div class="cl">Ref: ${escapeHtml(c.referencia)}</div>` : ""}
+      <div class="cl">${escapeHtml(c.ciudad || "")} — ${escapeHtml(c.departamento || c.municipio || "")}</div>
+      ${o.guia ? `<div class="cl">Guía: ${escapeHtml(o.guia)}</div>` : ""}
+      <div class="rule"></div>
+      <div class="foot">
+        <div class="fr">${IG_SVG}<span>@Armadiusa</span></div>
+        <div class="fr">${WA_SVG}<span>+1 (726) 219-5663</span></div>
+      </div>
+    </div>`;
+}
+
+function invoiceDoc(o) {
+  const ticket = invoiceTicket(o);
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Factura</title><style>
+    *{box-sizing:border-box;} html,body{margin:0;padding:0;}
+    @page{ size:80mm auto; margin:0; }
+    body{ width:80mm; color:#000; background:#fff;
+      font-family:'Segoe UI',Arial,sans-serif; -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+    .ticket{ width:72mm; margin:0 auto; padding:4mm 0 3mm; page-break-after:always; }
+    .ticket:last-child{ page-break-after:auto; }
+    .logo{ text-align:center; line-height:0; }
+    .logo svg{ height:15mm; }
+    .brand{ text-align:center; font-weight:800; font-size:15pt; letter-spacing:2px; margin-top:1mm; }
+    .tag{ text-align:center; font-size:7.5pt; letter-spacing:2px; margin-bottom:2mm; }
+    .rule{ border-top:1px dashed #000; margin:2.4mm 0; }
+    .prod{ font-weight:700; font-size:11pt; text-align:center; margin-bottom:2mm; }
+    .ln{ display:flex; justify-content:space-between; gap:4mm; font-size:9pt; padding:0.6mm 0; }
+    .ln.strong{ font-weight:800; font-size:10.5pt; border-top:1px solid #000; margin-top:1mm; padding-top:1.4mm; }
+    .chdr{ font-weight:800; font-size:8pt; letter-spacing:1px; margin-bottom:1mm; }
+    .cl{ font-size:9pt; padding:0.4mm 0; }
+    .foot{ margin-top:1.5mm; }
+    .fr{ display:flex; align-items:center; justify-content:center; gap:2mm; font-size:9.5pt; padding:0.6mm 0; }
+    .fr svg{ width:4.2mm; height:4.2mm; }
+  </style></head><body>${ticket}${ticket}</body></html>`;
+}
+
+// Imprime SIEMPRE 2 facturas por separado (2 copias) en una impresora térmica de 80 mm.
+function printInvoice(id) {
+  const o = ORDERS.find(x => x.id === id);
+  if (!o) return;
+  const ifr = document.createElement("iframe");
+  ifr.style.cssText = "position:fixed;right:0;bottom:0;width:0;height:0;border:0;";
+  document.body.appendChild(ifr);
+  ifr.onload = () => {
+    try { ifr.contentWindow.focus(); ifr.contentWindow.print(); } catch (e) { alert("No se pudo imprimir: " + e.message); }
+    setTimeout(() => ifr.remove(), 1500);
+  };
+  ifr.srcdoc = invoiceDoc(o);
+}
 
 /* ============================================================
    ARRANQUE
