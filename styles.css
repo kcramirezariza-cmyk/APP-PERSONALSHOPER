@@ -545,9 +545,52 @@ label select {
 }
 label select:focus { outline: 2px solid var(--accent); border-color: transparent; }
 
-/* ===================== RESPONSIVE ===================== */
-@media (max-width: 640px) {
+/* ===================== RESPONSIVE / APP MÓVIL ===================== */
+/* Zona segura (notch) cuando corre instalada como app */
+@media (display-mode: standalone) {
+  .topbar { padding-top: calc(14px + env(safe-area-inset-top)); }
+  .login-screen { padding-top: calc(24px + env(safe-area-inset-top)); }
+}
+
+/* Teléfonos y tablets en vertical */
+@media (max-width: 900px) {
+  .content { padding: 12px; }
   .grid-2, .grid-3 { grid-template-columns: 1fr; }
-  .topbar { gap: 10px; }
-  .content { padding: 14px; }
+
+  /* Barra superior compacta con pestañas deslizables */
+  .topbar { gap: 10px; padding: 10px 12px; flex-wrap: nowrap; }
+  .brand span { display: none; }
+  .brand-mark { height: 26px; }
+  .user-email { display: none; }
+  .tabs {
+    flex: 1; overflow-x: auto; flex-wrap: nowrap;
+    -webkit-overflow-scrolling: touch; scrollbar-width: none;
+  }
+  .tabs::-webkit-scrollbar { display: none; }
+  .tab { white-space: nowrap; padding: 9px 13px; }
+
+  /* Resumen en 2 columnas */
+  .stats-row { grid-template-columns: 1fr 1fr; gap: 8px; }
+
+  /* Toolbar apilada y cómoda al tacto */
+  .toolbar { gap: 8px; }
+  .toolbar select, .toolbar .btn-secondary { width: 100%; }
+
+  /* Modal como hoja inferior (bottom sheet), estilo app */
+  .modal { align-items: flex-end; padding: 0; }
+  .modal-card {
+    max-width: 100%; width: 100%; max-height: 92vh;
+    border-radius: 18px 18px 0 0;
+    padding: 20px 18px calc(22px + env(safe-area-inset-bottom));
+  }
+  .form-card { padding: 18px 16px; }
+}
+
+/* Teléfonos: columnas casi a pantalla completa, se deslizan como páginas */
+@media (max-width: 640px) {
+  .board { gap: 10px; scroll-snap-type: x mandatory; }
+  .col { flex: 0 0 86vw; scroll-snap-align: center; max-height: calc(100vh - 210px); }
+  .stat .num { font-size: 18px; }
+  .stat .lbl { font-size: 11px; }
+  h2 { font-size: 18px; }
 }

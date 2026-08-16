@@ -1747,6 +1747,11 @@ function printInvoiceClient(numero) {
 /* ============================================================
    ARRANQUE
    ============================================================ */
+// Registrar el Service Worker (PWA: instalable + offline)
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => navigator.serviceWorker.register("./sw.js").catch(() => {}));
+}
+
 document.addEventListener("DOMContentLoaded", () => {
   setupNav();
   setupFilters();
