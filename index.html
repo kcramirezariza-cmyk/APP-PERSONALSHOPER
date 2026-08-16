@@ -12,7 +12,7 @@
   <link rel="icon" type="image/png" href="icon-192.png" />
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
-  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
   <meta name="apple-mobile-web-app-title" content="ARMADIUSA" />
 
   <link rel="stylesheet" href="styles.css" />
@@ -57,12 +57,8 @@
 
       <!-- ---------- VISTA TABLERO ---------- -->
       <section id="view-tablero" class="view">
-        <div class="toolbar">
-          <select id="filterStatus">
-            <option value="">Todos los estados</option>
-          </select>
+        <div class="toolbar" id="tableroToolbar">
           <span id="clientFilterChip" class="filter-chip hidden"></span>
-          <button id="exportOrdersBtn" class="btn-secondary" data-role="admin">⬇ Exportar órdenes (Excel)</button>
         </div>
         <div id="statsRow" class="stats-row"></div>
         <div id="board" class="board"></div>

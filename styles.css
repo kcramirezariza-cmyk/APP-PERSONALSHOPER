@@ -557,8 +557,11 @@ label select:focus { outline: 2px solid var(--accent); border-color: transparent
   .content { padding: 12px; }
   .grid-2, .grid-3 { grid-template-columns: 1fr; }
 
-  /* Barra superior compacta con pestañas deslizables */
-  .topbar { gap: 10px; padding: 10px 12px; flex-wrap: nowrap; }
+  /* Barra superior compacta con pestañas deslizables (respeta el notch) */
+  .topbar {
+    gap: 10px; flex-wrap: nowrap;
+    padding: calc(10px + env(safe-area-inset-top)) 12px 10px;
+  }
   .brand span { display: none; }
   .brand-mark { height: 26px; }
   .user-email { display: none; }

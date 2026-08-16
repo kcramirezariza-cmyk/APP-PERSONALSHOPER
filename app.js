@@ -235,15 +235,20 @@ function wireLogin() {
 }
 
 function restoreSession() {
-  auth.onAuthStateChanged(() => {
-    if (localStorage.getItem("armadiusa_ok") === "1") {
-      const user = localStorage.getItem("armadiusa_user");
-      if (!user) return;
-      const role = (USERS[user] && USERS[user].role) || localStorage.getItem("armadiusa_role") || "colombia";
-      CURRENT = { user, role };
-      showApp();
-    }
-  });
+  // Restaura la sesión INMEDIATAMENTE desde el dispositivo (no espera a Firebase),
+  // así no pide login cada vez que se abre la app.
+  const restore = () => {
+    if (localStorage.getItem("armadiusa_ok") !== "1") return false;
+    const user = localStorage.getItem("armadiusa_user");
+    if (!user) return false;
+    const role = (USERS[user] && USERS[user].role) || localStorage.getItem("armadiusa_role") || "colombia";
+    CURRENT = { user, role };
+    showApp();
+    return true;
+  };
+  restore();
+  // Si Firebase reconecta o cambia de estado, mantener la sesión mostrada.
+  auth.onAuthStateChanged(() => { restore(); });
 }
 
 /* ============================================================
@@ -347,7 +352,8 @@ function visibleStatuses() {
 }
 
 function getFilteredOrders() {
-  const st = document.getElementById("filterStatus").value;
+  const stEl = document.getElementById("filterStatus");
+  const st = stEl ? stEl.value : "";
   return ORDERS.filter(o => {
     if (isArchived(o)) return false;            // los archivados van al Historial
     if (st && o.status !== st) return false;
@@ -677,6 +683,7 @@ function renderStats() {
 
 function setupFilters() {
   const sel = document.getElementById("filterStatus");
+  if (!sel) return;   // el filtro se quitó del tablero
   STATUSES.forEach(s => {
     const opt = document.createElement("option");
     opt.value = s.key; opt.textContent = s.label;
@@ -1764,7 +1771,8 @@ document.addEventListener("DOMContentLoaded", () => {
     if (e.target.id === "orderModal") closeModal();
   });
   document.getElementById("exportClientsBtn").addEventListener("click", exportClients);
-  document.getElementById("exportOrdersBtn").addEventListener("click", exportOrders);
+  const expOrders = document.getElementById("exportOrdersBtn");
+  if (expOrders) expOrders.addEventListener("click", exportOrders);
   document.getElementById("exportHistorialBtn").addEventListener("click", exportHistorial);
   document.getElementById("searchClients").addEventListener("input", renderClientsTable);
 
