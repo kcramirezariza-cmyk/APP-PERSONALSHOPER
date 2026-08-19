@@ -403,6 +403,15 @@ td .mini-btn:hover { color: #fff; background: var(--red); border-color: var(--re
 }
 .wa-btn:hover { background: #1eb457; }
 
+/* Acciones de usuario (cambiar clave inline) */
+.user-actions { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.mini-input {
+  background: var(--bg); border: 1px solid var(--line-strong); color: var(--text);
+  padding: 5px 8px; border-radius: 7px; font-size: 12px; font-family: inherit; width: 120px;
+}
+.mini-input:focus { outline: 2px solid var(--accent); border-color: transparent; }
+.mini-btn.del:hover { color: #fff; background: var(--red); border-color: var(--red); }
+
 /* Campo de costo (USD) dentro del avance */
 .cost-adv {
   width: 100%; background: var(--bg); border: 1px solid var(--line-strong); color: var(--text);

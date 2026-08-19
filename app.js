@@ -651,6 +651,7 @@ function cardHTML(o, sel, invSel) {
         </span>
       </div>
       ${comprado ? `<div class="guia comprado-tag">✅ Comprado · falta recibir</div>` : ""}
+      ${o.tienda && (o.status === "por_comprar_online" || o.status === "por_comprar_tienda") ? `<div class="guia">🛍️ ${escapeHtml(o.tienda)}</div>` : ""}
       ${o.guiaUsa ? `<div class="guia">📦 EE.UU.: ${escapeHtml(o.guiaUsa)}</div>` : ""}
       ${o.guia ? `<div class="guia">Guía: ${escapeHtml(o.guia)}</div>`
         : (o.tipoEnvio === "domicilio" ? `<div class="guia">Domicilio</div>` : "")}
@@ -795,6 +796,7 @@ function openOrderModal(id) {
     ${o.fotoURL ? `<img class="detail-photo" src="${o.fotoURL}" alt="Producto" />` : ""}
     <h2 style="margin:0 0 6px">${escapeHtml(o.productName)}</h2>
     <span class="badge">${statusLabel(o.status)}</span>
+    ${o.tienda ? `<div class="detail-row" style="margin-top:10px"><span class="k">🛍️ Comprar en</span><span>${escapeHtml(o.tienda)}</span></div>` : ""}
 
     <div class="detail-section-title">Pago</div>
     <div class="detail-row"><span class="k">Valor del producto</span><span>${COP(o.valor)}</span></div>
@@ -810,6 +812,7 @@ function openOrderModal(id) {
     <div class="detail-row"><span class="k">Nombre</span><span>${escapeHtml(c.nombre)}</span></div>
     <div class="detail-row"><span class="k">Teléfono</span><span>${escapeHtml(c.telefono)}</span></div>
     ${c.telefono ? `<div class="detail-row"><span class="k">WhatsApp</span><span><a class="wa-btn" href="${waLink(c.telefono)}" target="_blank" rel="noopener">💬 Abrir chat</a></span></div>` : ""}
+    ${c.cedula ? `<div class="detail-row"><span class="k">Cédula</span><span>${escapeHtml(c.cedula)}</span></div>` : ""}
     ${c.red ? `<div class="detail-row"><span class="k">Red social</span><span>${escapeHtml(c.red)}</span></div>` : ""}
     <div class="detail-row"><span class="k">Dirección</span><span>${escapeHtml(c.direccion)}</span></div>
     <div class="detail-row"><span class="k">Barrio</span><span>${escapeHtml(c.barrio)}</span></div>
@@ -1028,6 +1031,7 @@ function setupOrderForm() {
 function fillClient(c) {
   document.getElementById("cNombre").value = c.nombre || "";
   document.getElementById("cTelefono").value = c.telefono || "";
+  document.getElementById("cCedula").value = c.cedula || "";
   document.getElementById("cRed").value = c.red || "";
   document.getElementById("cDireccion").value = c.direccion || "";
   document.getElementById("cBarrio").value = c.barrio || "";
@@ -1040,6 +1044,7 @@ function readClientForm() {
   return {
     nombre: document.getElementById("cNombre").value.trim(),
     telefono: document.getElementById("cTelefono").value.trim(),
+    cedula: document.getElementById("cCedula").value.trim(),
     red: document.getElementById("cRed").value.trim(),
     direccion: document.getElementById("cDireccion").value.trim(),
     barrio: document.getElementById("cBarrio").value.trim(),
@@ -1068,6 +1073,7 @@ function editOrder(id) {
   document.getElementById("orderFormTitle").textContent = "Editar orden";
   document.getElementById("saveOrderBtn").textContent = "Guardar cambios";
   document.getElementById("productName").value = o.productName || "";
+  document.getElementById("tienda").value = o.tienda || "";
   document.getElementById("productValue").value = fmtThousands(String(o.valor || ""));
   // El abono inicial no se re-edita aquí (se maneja con "Abonar" en el detalle)
   document.getElementById("abono").value = "";
@@ -1115,6 +1121,7 @@ async function saveOrder(e) {
   const valor = parseNum(document.getElementById("productValue").value);
   const abonoIni = parseNum(document.getElementById("abono").value);
   const productName = document.getElementById("productName").value.trim();
+  const tienda = document.getElementById("tienda").value.trim();
   const file = document.getElementById("productPhoto").files[0];
   const tipoCompraEl = document.querySelector("input[name='tipoCompra']:checked");
   const tipoCompra = tipoCompraEl ? tipoCompraEl.value : null;
@@ -1153,7 +1160,7 @@ async function saveOrder(e) {
       await upsertClient(cliente, existingId);
       if (editingOrderId) {
         const cur = ORDERS.find(x => x.id === editingOrderId) || {};
-        const update = { productName, valor, cliente, tipoCompra,
+        const update = { productName, tienda, valor, cliente, tipoCompra,
           updatedAt: firebase.firestore.FieldValue.serverTimestamp() };
         if (fotoURL) update.fotoURL = fotoURL;
         // Si sigue en etapa de compra, sincroniza la columna con el tipo elegido
@@ -1162,7 +1169,7 @@ async function saveOrder(e) {
       } else {
         const abonos = abonoIni > 0 ? [{ monto: abonoIni, fecha: Date.now() }] : [];
         await db.collection("ordenes").add({
-          productName, valor, cliente, fotoURL: fotoURL || null,
+          productName, tienda, valor, cliente, fotoURL: fotoURL || null,
           abonos, abono: abonoIni, tipoCompra, costoUsd: 0, compradoOnline: false,
           status: initStatus, guia: "", tipoEnvio: null,
           historial: { [initStatus]: firebase.firestore.FieldValue.serverTimestamp() },
@@ -1176,14 +1183,14 @@ async function saveOrder(e) {
         const i = ORDERS.findIndex(o => o.id === editingOrderId);
         if (i >= 0) {
           const inCompra = ORDERS[i].status === "por_comprar_online" || ORDERS[i].status === "por_comprar_tienda";
-          ORDERS[i] = { ...ORDERS[i], productName, valor, cliente, tipoCompra,
+          ORDERS[i] = { ...ORDERS[i], productName, tienda, valor, cliente, tipoCompra,
             updatedAt: Date.now(), ...(fotoURL ? { fotoURL } : {}), ...(inCompra ? { status: initStatus } : {}) };
         }
       } else {
         const abonos = abonoIni > 0 ? [{ monto: abonoIni, fecha: Date.now() }] : [];
         ORDERS.unshift({
           id: newLocalId(),
-          productName, valor, cliente, fotoURL: fotoURL || null,
+          productName, tienda, valor, cliente, fotoURL: fotoURL || null,
           abonos, abono: abonoIni, tipoCompra, costoUsd: 0, compradoOnline: false,
           status: initStatus, guia: "", tipoEnvio: null,
           historial: { [initStatus]: Date.now() },
@@ -1325,19 +1332,21 @@ function renderClientsTable() {
 /* ============================================================
    USUARIOS (gestión por el administrador)
    ============================================================ */
+// Los usuarios se guardan dentro de un doc de "clientes" (que las reglas ya permiten),
+// en el campo "usuarios". Así funciona sin tener que tocar las reglas de Firestore.
+const USERS_DOC = () => db.collection("clientes").doc("_appconfig");
+
 function startUsuariosListener() {
-  db.collection("usuarios").onSnapshot(snap => {
-    if (snap.empty) { seedDefaultUsers(); return; }
-    const u = {};
-    snap.docs.forEach(d => { const x = d.data(); u[d.id] = { pass: x.pass, role: x.role, nombre: x.nombre }; });
+  USERS_DOC().onSnapshot(doc => {
+    const u = (doc.exists && doc.data() && doc.data().usuarios) ? doc.data().usuarios : {};
+    if (!u || Object.keys(u).length === 0) { seedDefaultUsers(); return; }
     USERS = u;
     if (CURRENT.user && USERS[CURRENT.user]) CURRENT.role = USERS[CURRENT.user].role;
     renderUsuarios();
   }, err => console.warn("usuarios:", err.message));  // si falla, se usan los DEFAULT_USERS
 }
 function seedDefaultUsers() {
-  Object.keys(DEFAULT_USERS).forEach(u =>
-    db.collection("usuarios").doc(u).set(DEFAULT_USERS[u]).catch(() => {}));
+  USERS_DOC().set({ usuarios: DEFAULT_USERS }, { merge: true }).catch(() => {});
 }
 
 async function saveUser(username, data) {
@@ -1345,14 +1354,14 @@ async function saveUser(username, data) {
     const store = lsGet("armadiusa_users", {}); store[username] = data; lsSet("armadiusa_users", store);
     USERS[username] = data; renderUsuarios(); return;
   }
-  await db.collection("usuarios").doc(username).set(data);
+  await USERS_DOC().set({ usuarios: { [username]: data } }, { merge: true });
 }
 async function removeUser(username) {
   if (!FIREBASE_READY) {
     const store = lsGet("armadiusa_users", {}); delete store[username]; lsSet("armadiusa_users", store);
     delete USERS[username]; renderUsuarios(); return;
   }
-  await db.collection("usuarios").doc(username).delete();
+  await USERS_DOC().update({ [`usuarios.${username}`]: firebase.firestore.FieldValue.delete() });
 }
 
 function renderUsuarios() {
@@ -1365,8 +1374,11 @@ function renderUsuarios() {
       <td>${escapeHtml(d.nombre || "")}</td>
       <td>${ROLE_LABELS[d.role] || d.role}</td>
       <td>
-        <button class="mini-btn" data-clave="${escapeHtml(u)}">Cambiar clave</button>
-        ${u === CURRENT.user ? "" : `<button class="mini-btn" data-deluser="${escapeHtml(u)}">Eliminar</button>`}
+        <div class="user-actions">
+          <input class="mini-input" type="text" data-passfor="${escapeHtml(u)}" placeholder="Nueva clave" autocomplete="off" />
+          <button class="mini-btn" data-clave="${escapeHtml(u)}">Guardar</button>
+          ${u === CURRENT.user ? "" : `<button class="mini-btn del" data-deluser="${escapeHtml(u)}">Eliminar</button>`}
+        </div>
       </td>
     </tr>`;
   }).join("");
@@ -1422,12 +1434,16 @@ async function crearUsuario() {
 }
 
 async function cambiarClave(u) {
-  const nueva = prompt(`Nueva clave para "${u}":`, "");
-  if (nueva === null) return;
-  const val = nueva.trim();
-  if (!val) { alert("La clave no puede quedar vacía."); return; }
-  try { await saveUser(u, { ...USERS[u], pass: val }); alert("Clave actualizada."); }
-  catch (e) { alert("No se pudo cambiar la clave: " + e.message); }
+  const inp = document.querySelector(`.mini-input[data-passfor="${u}"]`);
+  const val = inp ? inp.value.trim() : "";
+  if (!val) { alert("Escribe la nueva clave en la casilla antes de guardar."); return; }
+  try {
+    await saveUser(u, { ...(USERS[u] || {}), pass: val });
+    if (inp) inp.value = "";
+    alert("✓ Clave actualizada para " + u + ".");
+  } catch (e) {
+    alert("No se pudo cambiar la clave: " + (e.message || e.code));
+  }
 }
 
 async function eliminarUsuario(u) {
@@ -1579,7 +1595,7 @@ function renderDashboard() {
 function exportClients() {
   if (!CLIENTS.length) { alert("No hay clientes para exportar."); return; }
   const rows = CLIENTS.map(c => ({
-    "N° cliente": c.numero, Nombre: c.nombre, Teléfono: c.telefono, "Red social": c.red || "",
+    "N° cliente": c.numero, Nombre: c.nombre, Cédula: c.cedula || "", Teléfono: c.telefono, "Red social": c.red || "",
     Dirección: c.direccion, Barrio: c.barrio, "Punto de referencia": c.referencia || "",
     Ciudad: c.ciudad, Departamento: c.departamento || c.municipio || "",
   }));
@@ -1590,12 +1606,12 @@ function orderRows(list) {
   return list.map(o => {
     const c = o.cliente || {}; const saldo = saldoDe(o);
     return {
-      "N° cliente": c.numero, Producto: o.productName, Estado: statusLabel(o.status),
+      "N° cliente": c.numero, Producto: o.productName, Tienda: o.tienda || "", Estado: statusLabel(o.status),
       "Tipo compra": o.tipoCompra === "online" ? "Online" : "Tienda",
       Valor: o.valor || 0, "Costo USD": o.costoUsd || 0, Abonado: abonoTotal(o), Saldo: Math.max(0, saldo),
       "Guía EE.UU.": o.guiaUsa || "",
       "Tipo envío": o.tipoEnvio === "domicilio" ? "Domicilio" : (o.tipoEnvio ? "Interrapidísimo" : ""),
-      "Guía Colombia": o.guia || "", Cliente: c.nombre, Teléfono: c.telefono, "Red social": c.red || "",
+      "Guía Colombia": o.guia || "", Cliente: c.nombre, Cédula: c.cedula || "", Teléfono: c.telefono, "Red social": c.red || "",
       Dirección: c.direccion, Barrio: c.barrio, Referencia: c.referencia || "",
       Ciudad: c.ciudad, Departamento: c.departamento || c.municipio || "",
       Creada: fmtDate(o.createdAt), Entregada: o.historial && o.historial.entregado ? fmtDate(o.historial.entregado) : "",

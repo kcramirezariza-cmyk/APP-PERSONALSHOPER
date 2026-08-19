@@ -83,13 +83,16 @@
                 <input type="text" id="productName" required placeholder="Ej: Bolso Michael Kors negro" />
               </label>
               <label>Foto del producto (opcional)
-                <input type="file" id="productPhoto" accept="image/*" capture="environment" />
-                <span class="file-note">Opcional. Puedes tomar la foto o elegir de la galería.</span>
+                <input type="file" id="productPhoto" accept="image/*" />
+                <span class="file-note">Opcional. Elige tomar foto o subirla desde la galería.</span>
               </label>
             </div>
             <div id="photoPreviewWrap" class="photo-preview-wrap hidden">
               <img id="photoPreview" alt="Vista previa" />
             </div>
+            <label>Tienda / dónde comprar (opcional)
+              <input type="text" id="tienda" placeholder="Ej: Michael Kors, Amazon, Nordstrom…" />
+            </label>
             <div class="grid-3">
               <label>Valor del producto (COP) *
                 <input type="text" inputmode="numeric" id="productValue" required placeholder="560.000" />
@@ -122,13 +125,16 @@
               </label>
             </div>
             <div class="grid-2">
+              <label>Cédula / documento (opcional)
+                <input type="text" id="cCedula" inputmode="numeric" placeholder="N° de documento" />
+              </label>
               <label>Red social (opcional)
                 <input type="text" id="cRed" placeholder="@usuario en Instagram" />
               </label>
-              <label>Dirección *
-                <input type="text" id="cDireccion" required placeholder="Calle 00 # 00-00" />
-              </label>
             </div>
+            <label>Dirección *
+              <input type="text" id="cDireccion" required placeholder="Calle 00 # 00-00" />
+            </label>
             <div class="grid-2">
               <label>Barrio *
                 <input type="text" id="cBarrio" required />
