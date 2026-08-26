@@ -88,6 +88,8 @@ function waLink(phone) {
   if (d.length === 10 && d[0] === "3") d = "57" + d;
   return "https://wa.me/" + d;
 }
+// Ícono de WhatsApp (verde) para los botones de la interfaz
+const WA_ICON = '<svg viewBox="0 0 24 24" width="15" height="15" style="vertical-align:-2px" fill="#25d366"><path d="M12.04 2c-5.46 0-9.91 4.45-9.91 9.91 0 1.75.46 3.45 1.32 4.95L2 22l5.25-1.38c1.45.79 3.08 1.21 4.79 1.21 5.46 0 9.91-4.45 9.91-9.91S17.5 2 12.04 2zm0 18.15c-1.53 0-3.02-.41-4.32-1.19l-.31-.18-3.2.84.85-3.12-.2-.32a8.2 8.2 0 0 1-1.26-4.37c0-4.54 3.7-8.24 8.25-8.24 2.2 0 4.27.86 5.83 2.42a8.19 8.19 0 0 1 2.41 5.83c0 4.55-3.7 8.25-8.25 8.25zm4.52-6.16c-.25-.12-1.47-.72-1.69-.81-.23-.08-.39-.12-.56.13-.16.25-.64.81-.79.97-.15.17-.29.19-.54.06-.25-.12-1.05-.39-1.99-1.23-.74-.66-1.23-1.47-1.38-1.72-.14-.25-.02-.38.11-.51.11-.11.25-.29.37-.43.13-.15.17-.25.25-.41.08-.17.04-.31-.02-.43-.06-.12-.56-1.34-.76-1.84-.2-.48-.4-.42-.56-.42h-.48a.92.92 0 0 0-.66.31c-.23.25-.87.85-.87 2.07 0 1.22.89 2.4 1.01 2.57.12.17 1.75 2.67 4.25 3.74.59.26 1.05.41 1.41.52.59.19 1.13.16 1.56.1.48-.07 1.47-.6 1.68-1.18.21-.58.21-1.07.14-1.18-.06-.11-.22-.17-.47-.29z"/></svg>';
 
 /* ---------- Abonos ---------- */
 function getAbonos(o) {
@@ -118,9 +120,10 @@ let CURRENT = { user: null, role: "admin" };
 let boxMode = false;               // modo "armar caja" en la columna Por enviar
 let boxSelection = new Set();       // ids seleccionados para la caja
 let expandedBoxes = new Set();      // grupos desplegados en el tablero (cajas / clientes)
-let colSearch = { por_comprar_online: "", por_comprar_tienda: "" };  // búsqueda por columna
+let colSearch = { por_comprar_online: "", por_comprar_tienda: "", por_empacar: "" };  // búsqueda por columna
 let clientFilter = null;            // filtrar tablero por N° de cliente ("Ver pedidos")
 let invoiceSelection = new Set();    // productos marcados para facturar en Despachado
+let currentView = "tablero";         // vista activa (para redibujar solo lo necesario)
 const USD = n => "US$" + (Number(n) || 0).toLocaleString("en-US");
 
 /* ============================================================
@@ -141,6 +144,9 @@ function initFirebase() {
   firebase.initializeApp(cfg);
   auth = firebase.auth();
   db = firebase.firestore();
+  // Persistencia offline: guarda una copia local para que al reabrir se vean los
+  // datos de inmediato (aunque haya mala señal) y NUNCA aparezca "todo en cero".
+  try { db.enablePersistence({ synchronizeTabs: true }).catch(() => {}); } catch (e) {}
   return true;
 }
 
@@ -255,23 +261,45 @@ function restoreSession() {
    LISTENERS EN TIEMPO REAL (Firestore)
    ============================================================ */
 function startListeners() {
+  connBanner("Cargando datos…");
   unsubOrders = db.collection("ordenes").orderBy("createdAt", "desc")
     .onSnapshot(snap => {
       ORDERS = snap.docs.map(d => normalizeOrder({ id: d.id, ...d.data() }));
+      connBanner(null);
       renderAll();
-    }, err => console.error("Órdenes:", err));
+    }, err => {
+      console.error("Órdenes:", err);
+      connBanner("⚠ Sin conexión con la base de datos. Tus datos están a salvo; reintentando…");
+    });
 
   unsubClients = db.collection("clientes").orderBy("numero")
     .onSnapshot(snap => {
-      CLIENTS = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      CLIENTS = snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(c => c.id !== "_appconfig");
       renderClientDatalist();
       renderClientsTable();
     }, err => console.error("Clientes:", err));
 }
 
+// Aviso de conexión/carga en la parte superior
+function connBanner(msg) {
+  let b = document.getElementById("connBanner");
+  if (!msg) { if (b) b.remove(); return; }
+  if (!b) {
+    b = document.createElement("div");
+    b.id = "connBanner";
+    b.style.cssText = "background:var(--panel);border-bottom:1px solid var(--line);" +
+      "color:var(--muted);font-size:12.5px;padding:8px 22px;text-align:center;letter-spacing:.01em";
+    const tb = document.querySelector(".topbar");
+    if (tb) tb.insertAdjacentElement("afterend", b); else return;
+  }
+  b.textContent = msg;
+}
+
 function renderAll() {
   renderBoard(); renderStats();
-  renderHistorial(); renderDashboard();
+  // Historial y Dashboard son pesados: solo se redibujan si es la vista activa
+  if (currentView === "historial") renderHistorial();
+  if (currentView === "dashboard") renderDashboard();
 }
 
 /* ============================================================
@@ -335,11 +363,15 @@ function setupNav() {
 function showView(view) {
   // Bloquea vistas restringidas para el colaborador
   if (CURRENT.role !== "admin" && (view === "nueva" || view === "dashboard" || view === "usuarios")) view = "tablero";
+  currentView = view;
   document.querySelectorAll(".tab").forEach(t =>
     t.classList.toggle("active", t.dataset.view === view));
   document.querySelectorAll(".view").forEach(v => v.classList.add("hidden"));
   document.getElementById("view-" + view).classList.remove("hidden");
   if (view === "nueva" && !editingOrderId) resetOrderForm();
+  // Redibujar la vista pesada solo al entrar en ella
+  if (view === "historial") renderHistorial();
+  if (view === "dashboard") renderDashboard();
 }
 
 /* ============================================================
@@ -389,9 +421,9 @@ function boxArmPanelHTML() {
 }
 
 function colBodyHTML(list, statusKey) {
-  // Columnas de compra: barra de búsqueda propia
-  if (statusKey === "por_comprar_online" || statusKey === "por_comprar_tienda") {
-    const bar = `<input class="col-search" data-col="${statusKey}" placeholder="Buscar en esta columna…" autocomplete="off" value="${escapeHtml(colSearch[statusKey] || "")}" />`;
+  // Columnas con barra de búsqueda propia (compra + empacar)
+  if (statusKey === "por_comprar_online" || statusKey === "por_comprar_tienda" || statusKey === "por_empacar") {
+    const bar = `<input class="col-search" data-col="${statusKey}" placeholder="Buscar por cliente…" autocomplete="off" value="${escapeHtml(colSearch[statusKey] || "")}" />`;
     const cards = list.map(o => cardHTML(o)).join("") || `<div class="col-empty">—</div>`;
     return bar + cards;
   }
@@ -449,7 +481,8 @@ function groupedByClient(list, statusKey) {
           <span class="box-caret">${open ? "▾" : "▸"}</span>
           <span class="box-name">👤 #${c.numero ?? "—"} ${escapeHtml(c.nombre || "")}</span>
           <span class="box-count">${items.length}</span>
-          ${withInvoice ? `<button class="box-invoice" data-invcli="${escapeHtml(k)}" title="Factura de los productos marcados (o todos)">🧾</button>` : ""}
+          ${withInvoice ? `<button class="box-invoice" data-invcli="${escapeHtml(k)}" title="Imprimir factura (marcados o todos)">🧾</button>
+          <button class="box-wa" data-wacli="${escapeHtml(k)}" title="Enviar factura por WhatsApp">${WA_ICON}</button>` : ""}
         </div>
         ${open ? `<div class="box-items">${items.map(o => cardHTML(o, undefined, withInvoice ? invoiceSelection.has(o.id) : undefined)).join("")}</div>` : ""}
       </div>`;
@@ -462,6 +495,15 @@ function renderBoard() {
   const cols = visibleStatuses();
   const orders = getFilteredOrders();
   renderClientFilterChip();
+
+  // Guardar el scroll actual (por columna y horizontal) para restaurarlo tras redibujar
+  const prevScroll = {};
+  board.querySelectorAll(".col").forEach(c => {
+    const b = c.querySelector(".col-body");
+    if (b) prevScroll[c.dataset.status] = b.scrollTop;
+  });
+  const prevLeft = board.scrollLeft;
+
   board.innerHTML = cols.map(s => {
     const list = orders.filter(o => o.status === s.key);
     return `
@@ -495,15 +537,19 @@ function renderBoard() {
   // Plegar/desplegar grupos (cajas o clientes)
   board.querySelectorAll(".box-group-head").forEach(h =>
     h.addEventListener("click", e => {
-      if (e.target.closest(".box-edit") || e.target.closest(".box-invoice")) return;
+      if (e.target.closest(".box-edit") || e.target.closest(".box-invoice") || e.target.closest(".box-wa")) return;
       const g = h.dataset.gkey;
-      if (expandedBoxes.has(g)) expandedBoxes.delete(g); else expandedBoxes.add(g);
+      // Solo UNA caja abierta a la vez: al abrir otra, se cierra la anterior
+      if (expandedBoxes.has(g)) { expandedBoxes.delete(g); }
+      else { expandedBoxes.clear(); expandedBoxes.add(g); }
       renderBoard();
     }));
   board.querySelectorAll(".box-edit").forEach(b =>
     b.addEventListener("click", e => { e.stopPropagation(); editBoxByName(b.dataset.boxedit); }));
   board.querySelectorAll(".box-invoice").forEach(b =>
     b.addEventListener("click", e => { e.stopPropagation(); printInvoiceClient(b.dataset.invcli); }));
+  board.querySelectorAll(".box-wa").forEach(b =>
+    b.addEventListener("click", e => { e.stopPropagation(); whatsappInvoiceClient(b.dataset.wacli); }));
   board.querySelectorAll(".inv-check").forEach(el =>
     el.addEventListener("click", e => { e.stopPropagation(); toggleInvSelect(el.dataset.inv); }));
 
@@ -511,6 +557,13 @@ function renderBoard() {
   board.querySelectorAll(".col-search").forEach(inp =>
     inp.addEventListener("input", () => { colSearch[inp.dataset.col] = inp.value; applyColSearch(inp.dataset.col); }));
   Object.keys(colSearch).forEach(applyColSearch);
+
+  // Restaurar el scroll para que no salte al inicio al abrir/cerrar una caja
+  board.querySelectorAll(".col").forEach(c => {
+    const b = c.querySelector(".col-body");
+    if (b && prevScroll[c.dataset.status] != null) b.scrollTop = prevScroll[c.dataset.status];
+  });
+  board.scrollLeft = prevLeft;
 }
 
 // Chip que indica que se está viendo un solo cliente (desde "Ver pedidos")
@@ -625,7 +678,10 @@ async function editBoxGuide(o, fromModal = true) {
 
 function cardHTML(o, sel, invSel) {
   const saldo = saldoDe(o);
-  const paid = saldo <= 0;
+  const favor = saldo < 0;
+  const paid = saldo === 0;
+  const saldoTag = favor ? "A favor " + COP(-saldo) : (paid ? "Pagado ✓" : "Debe " + COP(saldo));
+  const saldoCls = favor ? "favor" : (paid ? "paid" : "pend");
   const c = o.cliente || {};
   const selectable = sel !== undefined;   // en modo "armar caja"
   const invSelectable = invSel !== undefined;  // selección para factura (Despachado)
@@ -646,9 +702,7 @@ function cardHTML(o, sel, invSel) {
       </div>
       <div class="meta">
         <span class="city">${escapeHtml(c.ciudad || "")}</span>
-        <span class="saldo-tag ${paid ? "paid" : "pend"}">
-          ${paid ? "Pagado ✓" : "Debe " + COP(saldo)}
-        </span>
+        <span class="saldo-tag ${saldoCls}">${saldoTag}</span>
       </div>
       ${comprado ? `<div class="guia comprado-tag">✅ Comprado · falta recibir</div>` : ""}
       ${o.tienda && (o.status === "por_comprar_online" || o.status === "por_comprar_tienda") ? `<div class="guia">🛍️ ${escapeHtml(o.tienda)}</div>` : ""}
@@ -802,9 +856,9 @@ function openOrderModal(id) {
     <div class="detail-row"><span class="k">Valor del producto</span><span>${COP(o.valor)}</span></div>
     ${abonosHTML}
     <div class="detail-row"><span class="k">Total abonado</span><span>${COP(abonoTotal(o))}</span></div>
-    <div class="detail-row"><span class="k">Saldo pendiente</span>
-      <span style="color:${saldo > 0 ? "var(--amber)" : "var(--green)"};font-weight:700">
-        ${saldo > 0 ? COP(saldo) : "Pagado ✓"}</span></div>
+    <div class="detail-row"><span class="k">${saldo < 0 ? "Saldo a favor" : "Saldo pendiente"}</span>
+      <span style="font-weight:700">
+        ${saldo > 0 ? COP(saldo) : (saldo < 0 ? "A favor " + COP(-saldo) : "Pagado ✓")}</span></div>
     ${abonoAddUI}
 
     <div class="detail-section-title">Cliente</div>
@@ -829,6 +883,7 @@ function openOrderModal(id) {
     <div class="modal-actions">
       ${advanceUI}
       ${o.status === "enviado_col" ? `<button class="btn-secondary" id="printBtn">🧾 Imprimir factura</button>` : ""}
+      ${o.status === "enviado_col" ? `<button class="btn-secondary" id="waInvBtn">${WA_ICON} Factura WhatsApp</button>` : ""}
       ${isAdmin && (o.status === "enviado" || o.status === "recibido_col") ? `<button class="btn-secondary" id="boxGuideBtn">✎ Guía de caja</button>` : ""}
       ${isAdmin && prevStatus(o) ? `<button class="btn-ghost" id="backBtn">← Regresar proceso</button>` : ""}
       ${isAdmin ? `<button class="btn-secondary" id="editOrderBtn">✎ Editar</button>` : ""}
@@ -845,6 +900,8 @@ function openOrderModal(id) {
   if (backBtn) backBtn.addEventListener("click", () => regresarStatus(o));
   const printBtn = document.getElementById("printBtn");
   if (printBtn) printBtn.addEventListener("click", () => printInvoice(o.id));
+  const waInvBtn = document.getElementById("waInvBtn");
+  if (waInvBtn) waInvBtn.addEventListener("click", () => whatsappInvoiceOrder(o.id));
   const boxGuideBtn = document.getElementById("boxGuideBtn");
   if (boxGuideBtn) boxGuideBtn.addEventListener("click", () => editBoxGuide(o));
   const addAb = document.getElementById("addAbonoBtn");
@@ -1138,6 +1195,26 @@ async function saveOrder(e) {
     msg.className = "form-msg err"; msg.textContent = "Selecciona el departamento del cliente.";
     return;
   }
+  // Resolver el cliente de ESTA orden por TELÉFONO (la selección del desplegable solo
+  // se usa si el teléfono está vacío). Así, al editar un producto: si el teléfono es NUEVO
+  // → se crea cliente nuevo y se reasigna SOLO ese producto; si es el mismo → no se toca el
+  // cliente compartido ni los demás productos.
+  let existing = null;
+  if (onlyDigits(cliente.telefono)) {
+    existing = CLIENTS.find(c => onlyDigits(c.telefono) === onlyDigits(cliente.telefono));
+  } else if (selectedClientId) {
+    existing = CLIENTS.find(c => c.id === selectedClientId);
+  }
+
+  // Al CREAR una orden nueva, si el teléfono ya existe y no se eligió del desplegable → bloquear duplicado
+  if (!editingOrderId && !selectedClientId && existing) {
+    msg.className = "form-msg err";
+    msg.textContent = `Ese teléfono ya existe: cliente #${existing.numero} ${existing.nombre}. Selecciónalo del desplegable de "Buscar cliente existente".`;
+    return;
+  }
+
+  cliente.numero = existing ? existing.numero : nextClientNumber();
+  const esClienteNuevo = !existing;   // solo se agrega a la base si de verdad es nuevo
   const initStatus = tipoCompra === "online" ? "por_comprar_online" : "por_comprar_tienda";
 
   btn.disabled = true; btn.textContent = "Guardando…";
@@ -1150,14 +1227,9 @@ async function saveOrder(e) {
       catch { fotoURL = null; msg.textContent = "No se pudo procesar la foto; se guarda sin ella."; }
     }
 
-    // Reutiliza SOLO si se eligió un cliente del desplegable; si no, crea uno nuevo
-    // con su propio N° (así nunca se sobreescribe otro cliente, aunque coincida el teléfono).
-    const existing = selectedClientId ? CLIENTS.find(c => c.id === selectedClientId) : null;
-    const existingId = existing ? existing.id : null;
-    cliente.numero = existing ? existing.numero : nextClientNumber();
-
     if (FIREBASE_READY) {
-      await upsertClient(cliente, existingId);
+      // Editar una orden NO modifica el cliente compartido; solo se agrega si es nuevo
+      if (esClienteNuevo) await upsertClient(cliente, null);
       if (editingOrderId) {
         const cur = ORDERS.find(x => x.id === editingOrderId) || {};
         const update = { productName, tienda, valor, cliente, tipoCompra,
@@ -1178,7 +1250,7 @@ async function saveOrder(e) {
         });
       }
     } else {
-      upsertClientLocal(cliente, existingId);
+      if (esClienteNuevo) upsertClientLocal(cliente, null);
       if (editingOrderId) {
         const i = ORDERS.findIndex(o => o.id === editingOrderId);
         if (i >= 0) {
@@ -1304,7 +1376,7 @@ function renderClientsTable() {
           <td>${escapeHtml(c.ciudad || "")}</td>
           <td>${escapeHtml(c.departamento || c.municipio || "")}</td>
           <td><button class="mini-btn ver" data-ver="${c.numero}">Ver (${pedidos})</button></td>
-          ${isAdmin ? `<td><button class="mini-btn" data-del="${c.id}">Eliminar</button></td>` : ""}
+          ${isAdmin ? `<td><div class="user-actions"><button class="mini-btn" data-edit="${c.id}">Editar</button><button class="mini-btn del" data-del="${c.id}">Eliminar</button></div></td>` : ""}
         </tr>`; }).join("")}
       </tbody>
     </table>`;
@@ -1317,6 +1389,9 @@ function renderClientsTable() {
       renderBoard();
     }));
 
+  document.querySelectorAll("[data-edit]").forEach(b =>
+    b.addEventListener("click", () => openClientEdit(b.dataset.edit)));
+
   document.querySelectorAll("[data-del]").forEach(b =>
     b.addEventListener("click", async () => {
       if (!confirm("¿Eliminar este cliente de la base de datos?")) return;
@@ -1327,6 +1402,91 @@ function renderClientsTable() {
         await db.collection("clientes").doc(b.dataset.del).delete();
       }
     }));
+}
+
+/* ============================================================
+   EDITAR CLIENTE
+   ============================================================ */
+let editingClientId = null;
+
+function setupClientEdit() {
+  const dep = document.getElementById("eDepartamento");
+  if (dep) dep.innerHTML = `<option value="">Selecciona…</option>` +
+    DEPARTAMENTOS.map(d => `<option value="${d}">${d}</option>`).join("");
+  const close = document.getElementById("closeClientModal");
+  if (close) close.addEventListener("click", closeClientModal);
+  const modal = document.getElementById("clientModal");
+  if (modal) modal.addEventListener("click", e => { if (e.target.id === "clientModal") closeClientModal(); });
+  const save = document.getElementById("saveClientBtn");
+  if (save) save.addEventListener("click", saveClientEdit);
+}
+function closeClientModal() { document.getElementById("clientModal").classList.add("hidden"); }
+
+function openClientEdit(id) {
+  const c = CLIENTS.find(x => x.id === id);
+  if (!c) return;
+  editingClientId = id;
+  document.getElementById("clientModalTitle").textContent = "Editar cliente #" + (c.numero ?? "");
+  document.getElementById("eNombre").value = c.nombre || "";
+  document.getElementById("eTelefono").value = c.telefono || "";
+  document.getElementById("eCedula").value = c.cedula || "";
+  document.getElementById("eRed").value = c.red || "";
+  document.getElementById("eDireccion").value = c.direccion || "";
+  document.getElementById("eBarrio").value = c.barrio || "";
+  document.getElementById("eReferencia").value = c.referencia || "";
+  document.getElementById("eCiudad").value = c.ciudad || "";
+  document.getElementById("eDepartamento").value = c.departamento || c.municipio || "";
+  document.getElementById("clientEditMsg").textContent = "";
+  document.getElementById("clientModal").classList.remove("hidden");
+}
+
+async function saveClientEdit() {
+  const c = CLIENTS.find(x => x.id === editingClientId);
+  if (!c) return;
+  const msg = document.getElementById("clientEditMsg"); msg.className = "form-msg";
+  const data = {
+    numero: c.numero,
+    nombre: document.getElementById("eNombre").value.trim(),
+    telefono: document.getElementById("eTelefono").value.trim(),
+    cedula: document.getElementById("eCedula").value.trim(),
+    red: document.getElementById("eRed").value.trim(),
+    direccion: document.getElementById("eDireccion").value.trim(),
+    barrio: document.getElementById("eBarrio").value.trim(),
+    referencia: document.getElementById("eReferencia").value.trim(),
+    ciudad: document.getElementById("eCiudad").value.trim(),
+    departamento: document.getElementById("eDepartamento").value,
+  };
+  if (!data.nombre || !data.telefono || !data.departamento) {
+    msg.className = "form-msg err"; msg.textContent = "Completa nombre, teléfono y departamento.";
+    return;
+  }
+  const btn = document.getElementById("saveClientBtn");
+  btn.disabled = true; btn.textContent = "Guardando…";
+  try {
+    if (!FIREBASE_READY) {
+      const i = CLIENTS.findIndex(x => x.id === editingClientId);
+      if (i >= 0) CLIENTS[i] = { ...CLIENTS[i], ...data };
+      ORDERS.forEach(o => { if ((o.cliente || {}).numero === c.numero) o.cliente = { ...data }; });
+      saveLocal(); renderAllLocal();
+    } else {
+      await db.collection("clientes").doc(editingClientId).set(
+        { ...data, updatedAt: firebase.firestore.FieldValue.serverTimestamp() }, { merge: true });
+      // Propagar los datos nuevos a las órdenes de ese cliente
+      const afectadas = ORDERS.filter(o => (o.cliente || {}).numero === c.numero);
+      for (let j = 0; j < afectadas.length; j += 400) {
+        const batch = db.batch();
+        afectadas.slice(j, j + 400).forEach(o =>
+          batch.update(db.collection("ordenes").doc(o.id), { cliente: data }));
+        await batch.commit();
+      }
+    }
+    msg.className = "form-msg ok"; msg.textContent = "✓ Cliente actualizado.";
+    setTimeout(closeClientModal, 500);
+  } catch (e) {
+    msg.className = "form-msg err"; msg.textContent = "Error: " + (e.message || e.code);
+  } finally {
+    btn.disabled = false; btn.textContent = "Guardar cambios";
+  }
 }
 
 /* ============================================================
@@ -1627,7 +1787,21 @@ function exportHistorial() {
   if (!list.length) { alert("No hay historial para exportar."); return; }
   downloadXlsx(orderRows(list), "Historial", `historial_${hoy()}`);
 }
-function downloadXlsx(rows, sheet, name) {
+// Carga la librería de Excel SOLO cuando se necesita (aligera la carga inicial)
+let xlsxLoading = null;
+function ensureXlsx() {
+  if (window.XLSX) return Promise.resolve();
+  if (xlsxLoading) return xlsxLoading;
+  xlsxLoading = new Promise((res, rej) => {
+    const s = document.createElement("script");
+    s.src = "https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js";
+    s.onload = res; s.onerror = () => rej(new Error("No se pudo cargar la librería de Excel."));
+    document.head.appendChild(s);
+  });
+  return xlsxLoading;
+}
+async function downloadXlsx(rows, sheet, name) {
+  try { await ensureXlsx(); } catch (e) { alert(e.message); return; }
   const ws = XLSX.utils.json_to_sheet(rows);
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, sheet);
@@ -1756,6 +1930,52 @@ function printInvoice(id) {
   printDoc(t + t);
 }
 
+// Texto de la factura para enviar por WhatsApp
+function buildInvoiceText(orders, c) {
+  const L = [];
+  L.push("*ARMADIUSA · Personal Shopper*");
+  L.push("Detalle de tu pedido");
+  L.push("");
+  L.push("*Cliente:* " + (c.nombre || "") + (c.numero ? " (#" + c.numero + ")" : ""));
+  L.push("");
+  orders.forEach(o => {
+    const s = Math.max(0, saldoDe(o));
+    L.push("• " + o.productName + " — " + COP(o.valor));
+    L.push("   Abonado: " + COP(abonoTotal(o)) + " · Saldo: " + COP(s));
+  });
+  const tV = orders.reduce((a, o) => a + (o.valor || 0), 0);
+  const tA = orders.reduce((a, o) => a + abonoTotal(o), 0);
+  const tS = orders.reduce((a, o) => a + Math.max(0, saldoDe(o)), 0);
+  L.push("");
+  L.push("*Total productos:* " + COP(tV));
+  L.push("*Total abonado:* " + COP(tA));
+  L.push("*SALDO PENDIENTE:* " + COP(tS));
+  L.push("");
+  L.push("Instagram: @Armadiusa  ·  WhatsApp: +1 (726) 219-5663");
+  return L.join("\n");
+}
+
+function whatsappInvoiceClient(numero) {
+  const grupo = ORDERS.filter(o => o.status === "enviado_col"
+    && String((o.cliente || {}).numero) === String(numero) && !isArchived(o));
+  if (!grupo.length) { alert("Ese cliente no tiene productos en Despachado."); return; }
+  const marcados = grupo.filter(o => invoiceSelection.has(o.id));
+  const orders = marcados.length ? marcados : grupo;
+  const c = orders[0].cliente || {};
+  if (!c.telefono) { alert("Ese cliente no tiene teléfono registrado."); return; }
+  const url = waLink(c.telefono) + "?text=" + encodeURIComponent(buildInvoiceText(orders, c));
+  window.open(url, "_blank");
+}
+
+function whatsappInvoiceOrder(id) {
+  const o = ORDERS.find(x => x.id === id);
+  if (!o) return;
+  const c = o.cliente || {};
+  if (!c.telefono) { alert("Este cliente no tiene teléfono registrado."); return; }
+  const url = waLink(c.telefono) + "?text=" + encodeURIComponent(buildInvoiceText([o], c));
+  window.open(url, "_blank");
+}
+
 // Factura de un cliente en "Despachado": solo los productos marcados (o todos si no hay marcados)
 function printInvoiceClient(numero) {
   const grupo = ORDERS.filter(o => o.status === "enviado_col"
@@ -1781,6 +2001,7 @@ document.addEventListener("DOMContentLoaded", () => {
   setupOrderForm();
   setupHistorial();
   setupDashboard();
+  setupClientEdit();
 
   document.getElementById("closeModalBtn").addEventListener("click", closeModal);
   document.getElementById("orderModal").addEventListener("click", e => {

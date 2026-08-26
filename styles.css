@@ -231,7 +231,9 @@ input, select { font-family: inherit; }
   border-radius: 20px;
   border: 1px solid var(--line);
 }
-.col-body { padding: 10px; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; }
+.col-body { padding: 10px; overflow-y: auto; -webkit-overflow-scrolling: touch; display: flex; flex-direction: column; gap: 10px; flex: 1 1 auto; min-height: 0; }
+/* Los bloques de la columna no se encogen: así el cuerpo hace scroll y se ve TODO */
+.col-body > * { flex-shrink: 0; }
 
 .card {
   background: var(--card);
@@ -254,6 +256,7 @@ input, select { font-family: inherit; }
 .card .saldo-tag { font-weight: 700; }
 .card .saldo-tag.pend { color: var(--text); }
 .card .saldo-tag.paid { color: var(--muted); font-weight: 600; }
+.card .saldo-tag.favor { color: #2f7a3a; font-weight: 700; }
 .card .city { color: var(--muted); }
 .card .guia { margin-top: 7px; font-size: 11px; color: var(--muted); letter-spacing: .02em; }
 
@@ -441,11 +444,11 @@ td .mini-btn:hover { color: #fff; background: var(--red); border-color: var(--re
 .card.inv-selected .inv-check { background: var(--accent); border-color: var(--accent); }
 
 /* Botón de factura en grupo de cliente */
-.box-invoice {
+.box-invoice, .box-wa {
   background: transparent; border: none; color: var(--muted);
   font-size: 14px; padding: 2px 4px; border-radius: 6px; cursor: pointer;
 }
-.box-invoice:hover { color: var(--text); background: var(--card); }
+.box-invoice:hover, .box-wa:hover { color: var(--text); background: var(--card); }
 
 /* Combobox de clientes (desplegable + búsqueda) */
 .field { display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: var(--muted); margin-bottom: 12px; }

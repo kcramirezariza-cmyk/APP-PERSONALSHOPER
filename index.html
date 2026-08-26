@@ -209,11 +209,39 @@
     </div>
   </div>
 
+  <!-- ===================== MODAL EDITAR CLIENTE ===================== -->
+  <div id="clientModal" class="modal hidden">
+    <div class="modal-card">
+      <div class="modal-head"><button class="modal-close" id="closeClientModal" aria-label="Cerrar">✕</button></div>
+      <div style="padding:0 2px">
+        <h2 id="clientModalTitle" style="margin:0 0 16px">Editar cliente</h2>
+        <div class="grid-2">
+          <label>Nombre * <input type="text" id="eNombre" /></label>
+          <label>Teléfono * <input type="tel" id="eTelefono" /></label>
+        </div>
+        <div class="grid-2">
+          <label>Cédula (opcional) <input type="text" id="eCedula" inputmode="numeric" /></label>
+          <label>Red social (opcional) <input type="text" id="eRed" /></label>
+        </div>
+        <label>Dirección * <input type="text" id="eDireccion" /></label>
+        <div class="grid-2">
+          <label>Barrio * <input type="text" id="eBarrio" /></label>
+          <label>Punto de referencia (opcional) <input type="text" id="eReferencia" /></label>
+        </div>
+        <div class="grid-2">
+          <label>Ciudad * <input type="text" id="eCiudad" /></label>
+          <label>Departamento * <select id="eDepartamento"></select></label>
+        </div>
+        <div class="form-actions"><button class="btn-primary" id="saveClientBtn">Guardar cambios</button></div>
+        <p id="clientEditMsg" class="form-msg"></p>
+      </div>
+    </div>
+  </div>
+
   <!-- ===================== LIBRERÍAS (CDN) ===================== -->
   <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 
   <script src="firebase-config.js"></script>
   <script src="app.js"></script>
