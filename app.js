@@ -274,7 +274,7 @@ function startListeners() {
 
   unsubClients = db.collection("clientes").orderBy("numero")
     .onSnapshot(snap => {
-      CLIENTS = snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(c => c.id !== "_appconfig");
+      CLIENTS = snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(c => !c.id.startsWith("_"));
       renderClientDatalist();
       renderClientsTable();
     }, err => console.error("Clientes:", err));
@@ -333,7 +333,7 @@ function localBanner(msg) {
   document.querySelector(".topbar").insertAdjacentElement("afterend", b);
 }
 
-// Convierte la foto a un dato incrustado (se guarda en el registro, sin Storage).
+// Convierte la foto a un dato incrustado (comprimida).
 async function fileToDataURL(file) {
   const blob = await compressImage(file, 760, 0.55);
   return await new Promise((res, rej) => {
@@ -342,6 +342,48 @@ async function fileToDataURL(file) {
     r.onerror = () => rej(new Error("No se pudo leer la imagen"));
     r.readAsDataURL(blob);
   });
+}
+
+/* ---------- Fotos separadas del pedido (para carga rápida) ----------
+   Se guardan como documentos en la colección "clientes" con id "_foto_<orderId>"
+   (permitido por las reglas actuales y excluidos de la lista de clientes). */
+async function savePhoto(orderId, dataUrl) {
+  await db.collection("clientes").doc("_foto_" + orderId).set({ data: dataUrl });
+}
+function savePhotoLocal(orderId, dataUrl) {
+  const store = lsGet("armadiusa_fotos", {}); store[orderId] = dataUrl; lsSet("armadiusa_fotos", store);
+}
+async function loadOrderPhoto(orderId, imgEl) {
+  if (!FIREBASE_READY) {
+    const store = lsGet("armadiusa_fotos", {});
+    if (store[orderId]) imgEl.src = store[orderId]; else imgEl.remove();
+    return;
+  }
+  try {
+    const d = await db.collection("clientes").doc("_foto_" + orderId).get();
+    if (d.exists && d.data() && d.data().data) imgEl.src = d.data().data;
+    else imgEl.remove();
+  } catch (e) { imgEl.remove(); }
+}
+
+// Migración única: mueve las fotos incrustadas (fotoURL) fuera de los pedidos.
+async function migrarFotos(onProgress) {
+  if (!FIREBASE_READY) return 0;
+  const snap = await db.collection("ordenes").get();
+  const conFoto = snap.docs.filter(d => d.data().fotoURL);
+  let n = 0;
+  for (let i = 0; i < conFoto.length; i += 15) {
+    const batch = db.batch();
+    conFoto.slice(i, i + 15).forEach(d => {
+      batch.set(db.collection("clientes").doc("_foto_" + d.id), { data: d.data().fotoURL });
+      batch.update(db.collection("ordenes").doc(d.id), {
+        fotoURL: firebase.firestore.FieldValue.delete(), tieneFoto: true });
+    });
+    await batch.commit();
+    n += Math.min(15, conFoto.length - i);
+    if (onProgress) onProgress(n, conFoto.length);
+  }
+  return n;
 }
 
 /* ============================================================
@@ -686,15 +728,11 @@ function cardHTML(o, sel, invSel) {
   const selectable = sel !== undefined;   // en modo "armar caja"
   const invSelectable = invSel !== undefined;  // selección para factura (Despachado)
   const comprado = o.status === "por_comprar_online" && o.compradoOnline;  // verde
-  const thumb = o.fotoURL
-    ? `<img class="thumb" src="${o.fotoURL}" alt="" loading="lazy" />`
-    : `<div class="thumb"></div>`;
   return `
     <div class="card ${selectable ? "selectable" : ""} ${sel ? "selected" : ""} ${invSelectable ? "inv-selectable" : ""} ${invSel ? "inv-selected" : ""} ${comprado ? "comprado" : ""}" data-id="${o.id}">
       ${selectable ? `<span class="card-check">${sel ? "✓" : ""}</span>` : ""}
       ${invSelectable ? `<span class="inv-check" data-inv="${o.id}" title="Marcar para facturar">${invSel ? "✓" : ""}</span>` : ""}
       <div class="row1">
-        ${thumb}
         <div>
           <div class="pname">${escapeHtml(o.productName)}</div>
           <div class="cname">${c.numero ? "#" + c.numero + " · " : ""}${escapeHtml(c.nombre || "—")}</div>
@@ -847,7 +885,7 @@ function openOrderModal(id) {
     : "";
 
   document.getElementById("orderModalBody").innerHTML = `
-    ${o.fotoURL ? `<img class="detail-photo" src="${o.fotoURL}" alt="Producto" />` : ""}
+    ${(o.fotoURL || o.tieneFoto) ? `<img class="detail-photo" id="detailPhoto" alt="Foto del producto" />` : ""}
     <h2 style="margin:0 0 6px">${escapeHtml(o.productName)}</h2>
     <span class="badge">${statusLabel(o.status)}</span>
     ${o.tienda ? `<div class="detail-row" style="margin-top:10px"><span class="k">🛍️ Comprar en</span><span>${escapeHtml(o.tienda)}</span></div>` : ""}
@@ -891,6 +929,10 @@ function openOrderModal(id) {
     </div>`;
 
   document.getElementById("orderModal").classList.remove("hidden");
+
+  // Cargar la foto solo al abrir el detalle (no en la carga inicial)
+  const dp = document.getElementById("detailPhoto");
+  if (dp) { if (o.fotoURL) dp.src = o.fotoURL; else loadOrderPhoto(o.id, dp); }
 
   const advBtn = document.getElementById("advanceBtn");
   if (advBtn) advBtn.addEventListener("click", () => advanceStatus(o));
@@ -1032,6 +1074,7 @@ async function deleteOrder(id) {
   }
   try {
     await db.collection("ordenes").doc(id).delete();
+    db.collection("clientes").doc("_foto_" + id).delete().catch(() => {});
     closeModal();
   } catch (e) { alert("No se pudo eliminar: " + e.message); }
 }
@@ -1145,9 +1188,14 @@ function editOrder(id) {
   // Al editar, reutiliza el mismo cliente del pedido (no crea uno nuevo)
   const oc = o.cliente || {};
   selectedClientId = (CLIENTS.find(c => c.numero === oc.numero) || {}).id || null;
+  const prev = document.getElementById("photoPreview");
+  const wrap = document.getElementById("photoPreviewWrap");
   if (o.fotoURL) {
-    document.getElementById("photoPreview").src = o.fotoURL;
-    document.getElementById("photoPreviewWrap").classList.remove("hidden");
+    prev.src = o.fotoURL; wrap.classList.remove("hidden");
+  } else if (o.tieneFoto && FIREBASE_READY) {
+    db.collection("clientes").doc("_foto_" + o.id).get()
+      .then(d => { if (d.exists && d.data() && d.data().data) { prev.src = d.data().data; wrap.classList.remove("hidden"); } })
+      .catch(() => {});
   }
 }
 
@@ -1219,12 +1267,13 @@ async function saveOrder(e) {
 
   btn.disabled = true; btn.textContent = "Guardando…";
   try {
-    // Foto (opcional) → se incrusta en el registro. Si falla, se guarda sin foto.
-    let fotoURL = null;
+    // Foto (opcional): se guarda APARTE (no dentro del pedido) para que el tablero
+    // cargue liviano; el pedido solo lleva la marca "tieneFoto".
+    let fotoData = null;
     if (file) {
       msg.className = "form-msg"; msg.textContent = "Procesando foto…";
-      try { fotoURL = await fileToDataURL(file); }
-      catch { fotoURL = null; msg.textContent = "No se pudo procesar la foto; se guarda sin ella."; }
+      try { fotoData = await fileToDataURL(file); }
+      catch { fotoData = null; msg.textContent = "No se pudo procesar la foto; se guarda sin ella."; }
     }
 
     if (FIREBASE_READY) {
@@ -1234,20 +1283,20 @@ async function saveOrder(e) {
         const cur = ORDERS.find(x => x.id === editingOrderId) || {};
         const update = { productName, tienda, valor, cliente, tipoCompra,
           updatedAt: firebase.firestore.FieldValue.serverTimestamp() };
-        if (fotoURL) update.fotoURL = fotoURL;
-        // Si sigue en etapa de compra, sincroniza la columna con el tipo elegido
         if (cur.status === "por_comprar_online" || cur.status === "por_comprar_tienda") update.status = initStatus;
+        if (fotoData) { update.tieneFoto = true; await savePhoto(editingOrderId, fotoData); }
         await db.collection("ordenes").doc(editingOrderId).update(update);
       } else {
         const abonos = abonoIni > 0 ? [{ monto: abonoIni, fecha: Date.now() }] : [];
-        await db.collection("ordenes").add({
-          productName, tienda, valor, cliente, fotoURL: fotoURL || null,
+        const ref = await db.collection("ordenes").add({
+          productName, tienda, valor, cliente, tieneFoto: !!fotoData,
           abonos, abono: abonoIni, tipoCompra, costoUsd: 0, compradoOnline: false,
           status: initStatus, guia: "", tipoEnvio: null,
           historial: { [initStatus]: firebase.firestore.FieldValue.serverTimestamp() },
           createdAt: firebase.firestore.FieldValue.serverTimestamp(),
           updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
         });
+        if (fotoData) await savePhoto(ref.id, fotoData);
       }
     } else {
       if (esClienteNuevo) upsertClientLocal(cliente, null);
@@ -1255,14 +1304,16 @@ async function saveOrder(e) {
         const i = ORDERS.findIndex(o => o.id === editingOrderId);
         if (i >= 0) {
           const inCompra = ORDERS[i].status === "por_comprar_online" || ORDERS[i].status === "por_comprar_tienda";
+          if (fotoData) savePhotoLocal(editingOrderId, fotoData);
           ORDERS[i] = { ...ORDERS[i], productName, tienda, valor, cliente, tipoCompra,
-            updatedAt: Date.now(), ...(fotoURL ? { fotoURL } : {}), ...(inCompra ? { status: initStatus } : {}) };
+            updatedAt: Date.now(), ...(fotoData ? { tieneFoto: true } : {}), ...(inCompra ? { status: initStatus } : {}) };
         }
       } else {
         const abonos = abonoIni > 0 ? [{ monto: abonoIni, fecha: Date.now() }] : [];
+        const id = newLocalId();
+        if (fotoData) savePhotoLocal(id, fotoData);
         ORDERS.unshift({
-          id: newLocalId(),
-          productName, tienda, valor, cliente, fotoURL: fotoURL || null,
+          id, productName, tienda, valor, cliente, tieneFoto: !!fotoData,
           abonos, abono: abonoIni, tipoCompra, costoUsd: 0, compradoOnline: false,
           status: initStatus, guia: "", tipoEnvio: null,
           historial: { [initStatus]: Date.now() },
