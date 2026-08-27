@@ -353,17 +353,41 @@ async function savePhoto(orderId, dataUrl) {
 function savePhotoLocal(orderId, dataUrl) {
   const store = lsGet("armadiusa_fotos", {}); store[orderId] = dataUrl; lsSet("armadiusa_fotos", store);
 }
-async function loadOrderPhoto(orderId, imgEl) {
+// Caché de fotos en memoria (no volver a descargar la misma foto)
+const photoCache = {};
+let photoObserver = null;
+
+async function fetchPhoto(orderId) {
+  if (photoCache[orderId] !== undefined) return photoCache[orderId];
+  let v = null;
   if (!FIREBASE_READY) {
-    const store = lsGet("armadiusa_fotos", {});
-    if (store[orderId]) imgEl.src = store[orderId]; else imgEl.remove();
-    return;
+    v = lsGet("armadiusa_fotos", {})[orderId] || null;
+  } else {
+    try {
+      const d = await db.collection("clientes").doc("_foto_" + orderId).get();
+      v = (d.exists && d.data() && d.data().data) ? d.data().data : null;
+    } catch (e) { v = null; }
   }
-  try {
-    const d = await db.collection("clientes").doc("_foto_" + orderId).get();
-    if (d.exists && d.data() && d.data().data) imgEl.src = d.data().data;
-    else imgEl.remove();
-  } catch (e) { imgEl.remove(); }
+  photoCache[orderId] = v;
+  return v;
+}
+
+// Miniaturas del tablero: cargan SOLO cuando la tarjeta aparece en pantalla
+function setupPhotoObserver() {
+  if (photoObserver) photoObserver.disconnect();
+  photoObserver = new IntersectionObserver(entries => {
+    entries.forEach(async en => {
+      if (!en.isIntersecting) return;
+      const el = en.target; photoObserver.unobserve(el);
+      const data = await fetchPhoto(el.dataset.photo);
+      if (data) { el.style.backgroundImage = `url("${data}")`; el.classList.add("loaded"); }
+    });
+  }, { rootMargin: "150px" });
+}
+
+async function loadOrderPhoto(orderId, imgEl) {
+  const data = await fetchPhoto(orderId);
+  if (data) imgEl.src = data; else imgEl.remove();
 }
 
 // Migración única: mueve las fotos incrustadas (fotoURL) fuera de los pedidos.
@@ -606,6 +630,14 @@ function renderBoard() {
     if (b && prevScroll[c.dataset.status] != null) b.scrollTop = prevScroll[c.dataset.status];
   });
   board.scrollLeft = prevLeft;
+
+  // Miniaturas: mostrar las ya cacheadas y cargar el resto al aparecer en pantalla
+  setupPhotoObserver();
+  board.querySelectorAll(".thumb[data-photo]").forEach(el => {
+    const id = el.dataset.photo;
+    if (photoCache[id]) { el.style.backgroundImage = `url("${photoCache[id]}")`; el.classList.add("loaded"); }
+    else if (!el.style.backgroundImage) photoObserver.observe(el);
+  });
 }
 
 // Chip que indica que se está viendo un solo cliente (desde "Ver pedidos")
@@ -728,11 +760,16 @@ function cardHTML(o, sel, invSel) {
   const selectable = sel !== undefined;   // en modo "armar caja"
   const invSelectable = invSel !== undefined;  // selección para factura (Despachado)
   const comprado = o.status === "por_comprar_online" && o.compradoOnline;  // verde
+  const hasPhoto = !!(o.fotoURL || o.tieneFoto);
+  const thumb = hasPhoto
+    ? `<div class="thumb" data-photo="${o.id}"${o.fotoURL ? ` style="background-image:url('${o.fotoURL}')"` : ""}></div>`
+    : `<div class="thumb empty"></div>`;
   return `
     <div class="card ${selectable ? "selectable" : ""} ${sel ? "selected" : ""} ${invSelectable ? "inv-selectable" : ""} ${invSel ? "inv-selected" : ""} ${comprado ? "comprado" : ""}" data-id="${o.id}">
       ${selectable ? `<span class="card-check">${sel ? "✓" : ""}</span>` : ""}
       ${invSelectable ? `<span class="inv-check" data-inv="${o.id}" title="Marcar para facturar">${invSel ? "✓" : ""}</span>` : ""}
       <div class="row1">
+        ${thumb}
         <div>
           <div class="pname">${escapeHtml(o.productName)}</div>
           <div class="cname">${c.numero ? "#" + c.numero + " · " : ""}${escapeHtml(c.nombre || "—")}</div>

@@ -247,9 +247,11 @@ input, select { font-family: inherit; }
 .card:hover { border-color: var(--text); transform: translateY(-1px); box-shadow: var(--shadow); }
 .card .row1 { display: flex; gap: 10px; }
 .card .thumb {
-  width: 46px; height: 46px; border-radius: 8px; object-fit: cover;
-  background: var(--panel); flex: 0 0 46px; border: 1px solid var(--line);
+  width: 46px; height: 46px; border-radius: 8px; flex: 0 0 46px;
+  background-color: var(--panel); border: 1px solid var(--line);
+  background-size: cover; background-position: center; background-repeat: no-repeat;
 }
+.card .thumb.empty { opacity: .6; }
 .card .pname { font-size: 14px; font-weight: 600; line-height: 1.2; }
 .card .cname { font-size: 12px; color: var(--muted); margin-top: 2px; }
 .card .meta { display: flex; justify-content: space-between; margin-top: 9px; font-size: 12px; align-items: center; }
