@@ -554,6 +554,16 @@ function boxFechaLabel(items) {
 function selCountIn(statusKey) {
   return [...invoiceSelection].filter(id => { const o = ORDERS.find(x => x.id === id); return o && o.status === statusKey; }).length;
 }
+// ids de un grupo (caja o cliente), aunque esté plegado
+function groupOrderIds(statusKey, gkey) {
+  const list = getFilteredOrders().filter(o => o.status === statusKey);
+  if (statusKey === "enviado") return list.filter(o => o.guiaUsa === gkey).map(o => o.id);
+  if (gkey && gkey.indexOf("cli:") === 0) {
+    const num = gkey.split(":")[2];
+    return list.filter(o => String((o.cliente || {}).numero) === num).map(o => o.id);
+  }
+  return [];
+}
 // Barra de "avanzar en grupo" para Enviado a Col / Recibido Col / Despachado
 function advanceBarHTML(statusKey) {
   const n = selCountIn(statusKey);
@@ -588,10 +598,12 @@ function colBodyHTML(list, statusKey) {
     let html = Object.keys(groups).map(g => {
       const open = expandedBoxes.has(g);
       const fecha = boxFechaLabel(groups[g]);
+      const allSel = groups[g].every(o => invoiceSelection.has(o.id));
       return `
       <div class="box-group ${open ? "open" : ""}">
         <div class="box-group-head" data-gkey="${escapeHtml(g)}">
           <span class="box-caret">${open ? "▾" : "▸"}</span>
+          <span class="box-selall ${allSel ? "on" : ""}" data-selall="${escapeHtml(g)}" data-selstatus="enviado" title="Seleccionar toda la caja">${allSel ? "✓" : ""}</span>
           <span class="box-name">📦 ${fecha ? fecha + " · " : ""}${escapeHtml(g)}</span>
           <span class="box-count">${groups[g].length}</span>
           <button class="box-edit" data-boxedit="${escapeHtml(g)}" title="Editar nombre / N° de guía de la caja">✎</button>
@@ -622,10 +634,12 @@ function groupedByClient(list, statusKey) {
     const c = items[0].cliente || {};
     const gkey = "cli:" + statusKey + ":" + k;
     const open = expandedBoxes.has(gkey);
+    const allSel = selectable && items.every(o => invoiceSelection.has(o.id));
     return `
       <div class="box-group ${open ? "open" : ""}">
         <div class="box-group-head" data-gkey="${escapeHtml(gkey)}">
           <span class="box-caret">${open ? "▾" : "▸"}</span>
+          ${selectable ? `<span class="box-selall ${allSel ? "on" : ""}" data-selall="${escapeHtml(gkey)}" data-selstatus="${statusKey}" title="Seleccionar todo el cliente">${allSel ? "✓" : ""}</span>` : ""}
           <span class="box-name">👤 #${c.numero ?? "—"} ${escapeHtml(c.nombre || "")}</span>
           <span class="box-count">${items.length}</span>
           ${withInvoice ? `<button class="box-invoice" data-invcli="${escapeHtml(k)}" title="Imprimir factura (marcados o todos)">🧾</button>
@@ -684,7 +698,7 @@ function renderBoard() {
   // Plegar/desplegar grupos (cajas o clientes)
   board.querySelectorAll(".box-group-head").forEach(h =>
     h.addEventListener("click", e => {
-      if (e.target.closest(".box-edit") || e.target.closest(".box-invoice") || e.target.closest(".box-wa")) return;
+      if (e.target.closest(".box-edit") || e.target.closest(".box-invoice") || e.target.closest(".box-wa") || e.target.closest(".box-selall")) return;
       const g = h.dataset.gkey;
       // Solo UNA caja abierta a la vez: al abrir otra, se cierra la anterior
       if (expandedBoxes.has(g)) { expandedBoxes.delete(g); }
@@ -701,6 +715,15 @@ function renderBoard() {
     el.addEventListener("click", e => { e.stopPropagation(); toggleInvSelect(el.dataset.inv); }));
   board.querySelectorAll(".btn-advance").forEach(b =>
     b.addEventListener("click", e => { e.stopPropagation(); advanceSelected(b.dataset.adv); }));
+  board.querySelectorAll(".box-selall").forEach(el =>
+    el.addEventListener("click", e => {
+      e.stopPropagation();
+      const ids = groupOrderIds(el.dataset.selstatus, el.dataset.selall);
+      const allSel = ids.length && ids.every(id => invoiceSelection.has(id));
+      if (allSel) ids.forEach(id => invoiceSelection.delete(id));
+      else ids.forEach(id => invoiceSelection.add(id));
+      renderBoard();
+    }));
 
   // Búsqueda por columna
   board.querySelectorAll(".col-search").forEach(inp =>
