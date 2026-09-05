@@ -19,6 +19,7 @@ const ROLE_LABELS = { admin: "Administrador (ve todo)", colombia: "Colaborador C
 const STATUSES = [
   { key: "por_comprar_online", label: "Por comprar Online", color: "#a1a1aa" },
   { key: "por_comprar_tienda", label: "Por comprar Tienda", color: "#a1a1aa" },
+  { key: "compra_directa", label: "Compra Directa", color: "#2563eb" },
   { key: "por_empacar",  label: "Por empacar",  color: "#8b8b93" },
   { key: "por_enviar",   label: "Por enviar",   color: "#71717a" },
   { key: "enviado",      label: "Enviado a Col", color: "#5c5c64" },
@@ -33,6 +34,8 @@ const statusColor = k => (STATUS_MAP[k] ? STATUS_MAP[k].color : "#8b95b0");
 
 /* Secuencia real de cada pedido según su tipo de compra */
 function pipeline(o) {
+  // Compra Directa: se compra en EE.UU. pero llega directo a Cúcuta → salta empaque/envío
+  if (o && o.tipoCompra === "directa") return ["compra_directa", "recibido_col", "enviado_col", "entregado"];
   const first = (o && o.tipoCompra === "online") ? "por_comprar_online" : "por_comprar_tienda";
   return [first, "por_empacar", "por_enviar", "enviado", "recibido_col", "enviado_col", "entregado"];
 }
@@ -120,11 +123,18 @@ let CURRENT = { user: null, role: "admin" };
 let boxMode = false;               // modo "armar caja" en la columna Por enviar
 let boxSelection = new Set();       // ids seleccionados para la caja
 let expandedBoxes = new Set();      // grupos desplegados en el tablero (cajas / clientes)
-let colSearch = { por_comprar_online: "", por_comprar_tienda: "", por_empacar: "" };  // búsqueda por columna
+let colSearch = {};                 // búsqueda por columna (todas las columnas)
 let clientFilter = null;            // filtrar tablero por N° de cliente ("Ver pedidos")
-let invoiceSelection = new Set();    // productos marcados para facturar en Despachado
+let invoiceSelection = new Set();    // productos marcados para facturar / avanzar en grupo
 let currentView = "tablero";         // vista activa (para redibujar solo lo necesario)
 const USD = n => "US$" + (Number(n) || 0).toLocaleString("en-US");
+
+/* ---------- Roles ----------
+   admin = ve y gestiona todo. colombia (armadi) = gestiona todo IGUAL que admin,
+   pero SIN Dashboard, SIN Usuarios y SIN los totales de dinero (saldo por cobrar /
+   total recaudado). Solo hay dos roles, así que "gestionar" lo pueden ambos. */
+const isAdminRole = () => CURRENT.role === "admin";
+const canManage = () => true;   // cualquier usuario autenticado gestiona pedidos/clientes
 
 /* ============================================================
    INICIALIZACIÓN DE FIREBASE
@@ -333,15 +343,24 @@ function localBanner(msg) {
   document.querySelector(".topbar").insertAdjacentElement("afterend", b);
 }
 
-// Convierte la foto a un dato incrustado (comprimida).
-async function fileToDataURL(file) {
-  const blob = await compressImage(file, 760, 0.55);
-  return await new Promise((res, rej) => {
+function blobToDataURL(blob) {
+  return new Promise((res, rej) => {
     const r = new FileReader();
     r.onload = () => res(r.result);
     r.onerror = () => rej(new Error("No se pudo leer la imagen"));
     r.readAsDataURL(blob);
   });
+}
+// Convierte la foto a un dato incrustado (comprimida). Si la compresión falla
+// (p. ej. fotos HEIC de iPhone que el canvas no decodifica), guarda el archivo
+// original tal cual para NO perder la imagen.
+async function fileToDataURL(file) {
+  try {
+    const blob = await compressImage(file, 760, 0.55);
+    return await blobToDataURL(blob);
+  } catch (e) {
+    return await blobToDataURL(file);
+  }
 }
 
 /* ---------- Fotos separadas del pedido (para carga rápida) ----------
@@ -427,8 +446,8 @@ function setupNav() {
   });
 }
 function showView(view) {
-  // Bloquea vistas restringidas para el colaborador
-  if (CURRENT.role !== "admin" && (view === "nueva" || view === "dashboard" || view === "usuarios")) view = "tablero";
+  // Bloquea solo Dashboard y Usuarios para la colaboradora (lo demás sí lo puede usar)
+  if (CURRENT.role !== "admin" && (view === "dashboard" || view === "usuarios")) view = "tablero";
   currentView = view;
   document.querySelectorAll(".tab").forEach(t =>
     t.classList.toggle("active", t.dataset.view === view));
@@ -444,9 +463,8 @@ function showView(view) {
    TABLERO (KANBAN)
    ============================================================ */
 function visibleStatuses() {
-  if (CURRENT.role === "admin") return STATUSES;
-  const start = statusIndex(COLOMBIA_START);
-  return STATUSES.slice(start);
+  // Ambos roles ven el tablero completo. (La colaboradora ahora tiene acceso general.)
+  return STATUSES;
 }
 
 function getFilteredOrders() {
@@ -460,16 +478,47 @@ function getFilteredOrders() {
   });
 }
 
-// Filtra las tarjetas de una columna (búsqueda propia de esa columna)
+// ¿Coincide una orden con el texto de búsqueda?
+function orderMatches(o, q) {
+  if (!q) return true;
+  const c = (o && o.cliente) || {};
+  const hay = [o.productName, c.nombre, "#" + c.numero, c.ciudad, c.telefono, o.guiaUsa, o.guia]
+    .filter(Boolean).join(" ").toLowerCase();
+  return hay.includes(q);
+}
+
+// Filtra las tarjetas de una columna. En columnas agrupadas (cajas / clientes)
+// oculta también los grupos que no coinciden, aunque estén plegados.
 function applyColSearch(colKey) {
   const q = (colSearch[colKey] || "").toLowerCase().trim();
   const colEl = [...document.querySelectorAll("#board .col")].find(c => c.dataset.status === colKey);
   if (!colEl) return;
-  colEl.querySelectorAll(".card").forEach(card => {
+  const colOrders = getFilteredOrders().filter(o => o.status === colKey);
+
+  // Tarjetas sueltas (columnas sin agrupar y cajas sin guía)
+  const body = colEl.querySelector(".col-body");
+  if (body) body.querySelectorAll(":scope > .card").forEach(card => {
     const o = ORDERS.find(x => x.id === card.dataset.id);
-    const c = (o && o.cliente) || {};
-    const hay = o ? [o.productName, c.nombre, "#" + c.numero, c.ciudad, c.telefono].filter(Boolean).join(" ").toLowerCase() : "";
-    card.style.display = (!q || hay.includes(q)) ? "" : "none";
+    card.style.display = orderMatches(o, q) ? "" : "none";
+  });
+
+  // Grupos (cajas o clientes)
+  colEl.querySelectorAll(".box-group").forEach(g => {
+    const head = g.querySelector(".box-group-head");
+    const gkey = head ? head.dataset.gkey : "";
+    let orders = [];
+    if (colKey === "enviado") orders = colOrders.filter(o => o.guiaUsa === gkey);
+    else if (gkey && gkey.indexOf("cli:") === 0) {
+      const num = gkey.split(":")[2];
+      orders = colOrders.filter(o => String((o.cliente || {}).numero) === num);
+    }
+    const match = !q || (gkey && gkey.toLowerCase().includes(q)) || orders.some(o => orderMatches(o, q));
+    g.style.display = match ? "" : "none";
+    // Si el grupo está abierto, filtra también sus tarjetas internas
+    g.querySelectorAll(".card").forEach(card => {
+      const o = ORDERS.find(x => x.id === card.dataset.id);
+      card.style.display = orderMatches(o, q) ? "" : "none";
+    });
   });
 }
 
@@ -486,47 +535,78 @@ function boxArmPanelHTML() {
   </div>`;
 }
 
+// Barra de búsqueda propia de cada columna
+function colSearchBar(statusKey) {
+  return `<input class="col-search" data-col="${statusKey}" placeholder="Buscar por cliente, producto o guía…" autocomplete="off" value="${escapeHtml(colSearch[statusKey] || "")}" />`;
+}
+// Fecha (inmutable) de creación de una caja: DD/MM
+function fmtDayShort(ts) {
+  const m = tsMillis(ts); if (!m) return "";
+  const d = new Date(m);
+  return d.getDate() + "/" + String(d.getMonth() + 1).padStart(2, "0");
+}
+function boxFechaLabel(items) {
+  const ts = items.map(o => o.fechaCaja || (o.historial && o.historial.enviado))
+    .map(tsMillis).filter(Boolean);
+  return ts.length ? fmtDayShort(Math.min(...ts)) : "";
+}
+// ¿Cuántos productos seleccionados hay en esta columna (para avance múltiple)?
+function selCountIn(statusKey) {
+  return [...invoiceSelection].filter(id => { const o = ORDERS.find(x => x.id === id); return o && o.status === statusKey; }).length;
+}
+// Barra de "avanzar en grupo" para Enviado a Col / Recibido Col / Despachado
+function advanceBarHTML(statusKey) {
+  const n = selCountIn(statusKey);
+  const nk = nextStatus({ status: statusKey, tipoCompra: "tienda" });
+  const lbl = nk ? statusLabel(nk) : "";
+  return `<div class="col-advance">
+    <button class="btn-advance" data-adv="${statusKey}" ${n ? "" : "disabled"}>Avanzar (${n}) → ${lbl}</button>
+    <span class="col-advance-hint">Marca ✓ los productos y avánzalos juntos.</span>
+  </div>`;
+}
+
 function colBodyHTML(list, statusKey) {
-  // Columnas con barra de búsqueda propia (compra + empacar)
-  if (statusKey === "por_comprar_online" || statusKey === "por_comprar_tienda" || statusKey === "por_empacar") {
-    const bar = `<input class="col-search" data-col="${statusKey}" placeholder="Buscar por cliente…" autocomplete="off" value="${escapeHtml(colSearch[statusKey] || "")}" />`;
+  const bar = colSearchBar(statusKey);
+  // Compra / empaque / compra directa: lista simple con buscador
+  if (["por_comprar_online", "por_comprar_tienda", "por_empacar", "compra_directa"].includes(statusKey)) {
     const cards = list.map(o => cardHTML(o)).join("") || `<div class="col-empty">—</div>`;
     return bar + cards;
   }
-  // Por enviar: armar caja (solo admin)
-  if (statusKey === "por_enviar" && CURRENT.role === "admin") {
+  // Por enviar: armar caja
+  if (statusKey === "por_enviar") {
     const top = boxMode
       ? boxArmPanelHTML()
       : `<button class="box-toggle" id="boxToggleBtn">📦 Armar caja</button>`;
     const cards = list.map(o => cardHTML(o, boxMode ? boxSelection.has(o.id) : undefined)).join("")
       || `<div class="col-empty">—</div>`;
-    return top + cards;
+    return bar + top + cards;
   }
-  // Enviado a Col: agrupar por CAJA (guía de EE.UU.)
+  // Enviado a Col: agrupar por CAJA (guía de EE.UU.) + avance múltiple
   if (statusKey === "enviado") {
     const groups = {}; const solos = [];
     list.forEach(o => { if (o.guiaUsa) (groups[o.guiaUsa] = groups[o.guiaUsa] || []).push(o); else solos.push(o); });
     let html = Object.keys(groups).map(g => {
       const open = expandedBoxes.has(g);
+      const fecha = boxFechaLabel(groups[g]);
       return `
       <div class="box-group ${open ? "open" : ""}">
         <div class="box-group-head" data-gkey="${escapeHtml(g)}">
           <span class="box-caret">${open ? "▾" : "▸"}</span>
-          <span class="box-name">📦 ${escapeHtml(g)}</span>
+          <span class="box-name">📦 ${fecha ? fecha + " · " : ""}${escapeHtml(g)}</span>
           <span class="box-count">${groups[g].length}</span>
-          <button class="box-edit" data-boxedit="${escapeHtml(g)}" title="Editar nombre de la caja">✎</button>
+          <button class="box-edit" data-boxedit="${escapeHtml(g)}" title="Editar nombre / N° de guía de la caja">✎</button>
         </div>
-        ${open ? `<div class="box-items">${groups[g].map(o => cardHTML(o)).join("")}</div>` : ""}
+        ${open ? `<div class="box-items">${groups[g].map(o => cardHTML(o, undefined, invoiceSelection.has(o.id))).join("")}</div>` : ""}
       </div>`;
     }).join("");
-    html += solos.map(o => cardHTML(o)).join("");
-    return html || `<div class="col-empty">—</div>`;
+    html += solos.map(o => cardHTML(o, undefined, invoiceSelection.has(o.id))).join("");
+    return bar + advanceBarHTML(statusKey) + (html || `<div class="col-empty">—</div>`);
   }
-  // Recibido Col y Despachado: agrupar por CLIENTE (n° + nombre)
+  // Recibido Col y Despachado: agrupar por CLIENTE (n° + nombre) + avance múltiple
   if (statusKey === "recibido_col" || statusKey === "enviado_col") {
-    return groupedByClient(list, statusKey);
+    return bar + advanceBarHTML(statusKey) + groupedByClient(list, statusKey);
   }
-  return list.map(o => cardHTML(o)).join("") || `<div class="col-empty">—</div>`;
+  return bar + (list.map(o => cardHTML(o)).join("") || `<div class="col-empty">—</div>`);
 }
 
 function groupedByClient(list, statusKey) {
@@ -536,6 +616,7 @@ function groupedByClient(list, statusKey) {
     (groups[k] = groups[k] || []).push(o);
   });
   const withInvoice = statusKey === "enviado_col";
+  const selectable = statusKey === "recibido_col" || statusKey === "enviado_col";  // checkbox para avanzar en grupo
   const html = Object.keys(groups).map(k => {
     const items = groups[k];
     const c = items[0].cliente || {};
@@ -550,7 +631,7 @@ function groupedByClient(list, statusKey) {
           ${withInvoice ? `<button class="box-invoice" data-invcli="${escapeHtml(k)}" title="Imprimir factura (marcados o todos)">🧾</button>
           <button class="box-wa" data-wacli="${escapeHtml(k)}" title="Enviar factura por WhatsApp">${WA_ICON}</button>` : ""}
         </div>
-        ${open ? `<div class="box-items">${items.map(o => cardHTML(o, undefined, withInvoice ? invoiceSelection.has(o.id) : undefined)).join("")}</div>` : ""}
+        ${open ? `<div class="box-items">${items.map(o => cardHTML(o, undefined, selectable ? invoiceSelection.has(o.id) : undefined)).join("")}</div>` : ""}
       </div>`;
   }).join("");
   return html || `<div class="col-empty">—</div>`;
@@ -618,6 +699,8 @@ function renderBoard() {
     b.addEventListener("click", e => { e.stopPropagation(); whatsappInvoiceClient(b.dataset.wacli); }));
   board.querySelectorAll(".inv-check").forEach(el =>
     el.addEventListener("click", e => { e.stopPropagation(); toggleInvSelect(el.dataset.inv); }));
+  board.querySelectorAll(".btn-advance").forEach(b =>
+    b.addEventListener("click", e => { e.stopPropagation(); advanceSelected(b.dataset.adv); }));
 
   // Búsqueda por columna
   board.querySelectorAll(".col-search").forEach(inp =>
@@ -659,7 +742,7 @@ function editBoxByName(name) {
 
 function toggleBoxMode() { boxMode = !boxMode; boxSelection.clear(); renderBoard(); }
 
-// Marcar/desmarcar un producto para la factura del cliente (Despachado)
+// Marcar/desmarcar un producto (factura del cliente y/o avance múltiple)
 function toggleInvSelect(id) {
   if (invoiceSelection.has(id)) invoiceSelection.delete(id); else invoiceSelection.add(id);
   const card = document.querySelector(`.card[data-id="${id}"]`);
@@ -669,6 +752,64 @@ function toggleInvSelect(id) {
     const chk = card.querySelector(".inv-check");
     if (chk) chk.textContent = on ? "✓" : "";
   }
+  updateAdvanceBars();
+}
+
+// Actualiza el texto/estado de los botones "Avanzar (N)" sin redibujar todo
+function updateAdvanceBars() {
+  document.querySelectorAll(".btn-advance").forEach(btn => {
+    const st = btn.dataset.adv;
+    const n = selCountIn(st);
+    const nk = nextStatus({ status: st, tipoCompra: "tienda" });
+    btn.textContent = `Avanzar (${n}) → ${nk ? statusLabel(nk) : ""}`;
+    btn.disabled = n === 0;
+  });
+}
+
+// Avanza TODOS los productos marcados de una columna al siguiente proceso
+async function advanceSelected(statusKey) {
+  const ids = [...invoiceSelection].filter(id => {
+    const o = ORDERS.find(x => x.id === id); return o && o.status === statusKey;
+  });
+  if (!ids.length) return;
+  const nk = nextStatus({ status: statusKey, tipoCompra: "tienda" });
+  if (!nk) return;
+  if (!confirm(`¿Avanzar ${ids.length} producto(s) de "${statusLabel(statusKey)}" a "${statusLabel(nk)}"?`)) return;
+
+  // Al pasar de "Recibido Col" a "Despachado" se marca el envío por defecto (Interrapidísimo)
+  const setEnvio = nk === "enviado_col";
+
+  if (!FIREBASE_READY) {
+    const now = Date.now();
+    ids.forEach(id => {
+      const i = ORDERS.findIndex(o => o.id === id); if (i < 0) return;
+      ORDERS[i].status = nk; ORDERS[i].updatedAt = now;
+      ORDERS[i].historial = { ...(ORDERS[i].historial || {}), [nk]: now };
+      if (setEnvio && !ORDERS[i].tipoEnvio) { ORDERS[i].tipoEnvio = "interrapidisimo"; ORDERS[i].rastreoActivo = true; }
+    });
+    invoiceSelection.clear();
+    saveLocal(); renderAllLocal();
+    return;
+  }
+  try {
+    for (let j = 0; j < ids.length; j += 400) {
+      const batch = db.batch();
+      ids.slice(j, j + 400).forEach(id => {
+        const upd = {
+          status: nk,
+          updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+          [`historial.${nk}`]: firebase.firestore.FieldValue.serverTimestamp(),
+        };
+        if (setEnvio) {
+          const o = ORDERS.find(x => x.id === id) || {};
+          if (!o.tipoEnvio) { upd.tipoEnvio = "interrapidisimo"; upd.rastreoActivo = true; }
+        }
+        batch.update(db.collection("ordenes").doc(id), upd);
+      });
+      await batch.commit();
+    }
+    invoiceSelection.clear();
+  } catch (e) { alert("No se pudieron avanzar: " + e.message); }
 }
 
 function toggleBoxSelect(id) {
@@ -705,6 +846,7 @@ async function enviarCaja() {
     ids.forEach(id => {
       const i = ORDERS.findIndex(o => o.id === id);
       ORDERS[i].status = "enviado"; ORDERS[i].guiaUsa = guia; ORDERS[i].updatedAt = now;
+      ORDERS[i].fechaCaja = now;
       ORDERS[i].historial = { ...(ORDERS[i].historial || {}), enviado: now };
     });
     boxMode = false; boxSelection.clear();
@@ -715,6 +857,7 @@ async function enviarCaja() {
     const batch = db.batch();
     ids.forEach(id => batch.update(db.collection("ordenes").doc(id), {
       status: "enviado", guiaUsa: guia,
+      fechaCaja: firebase.firestore.FieldValue.serverTimestamp(),
       updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
       "historial.enviado": firebase.firestore.FieldValue.serverTimestamp(),
     }));
@@ -758,14 +901,16 @@ function cardHTML(o, sel, invSel) {
   const saldoCls = favor ? "favor" : (paid ? "paid" : "pend");
   const c = o.cliente || {};
   const selectable = sel !== undefined;   // en modo "armar caja"
-  const invSelectable = invSel !== undefined;  // selección para factura (Despachado)
-  const comprado = o.status === "por_comprar_online" && o.compradoOnline;  // verde
+  const invSelectable = invSel !== undefined;  // selección para factura / avance en grupo
+  const compradoOnline = o.status === "por_comprar_online" && o.compradoOnline;   // verde
+  const compradoDirecta = o.status === "compra_directa" && o.compradoOnline;       // azul
+  const comprado = compradoOnline || compradoDirecta;
   const hasPhoto = !!(o.fotoURL || o.tieneFoto);
   const thumb = hasPhoto
     ? `<div class="thumb" data-photo="${o.id}"${o.fotoURL ? ` style="background-image:url('${o.fotoURL}')"` : ""}></div>`
     : `<div class="thumb empty"></div>`;
   return `
-    <div class="card ${selectable ? "selectable" : ""} ${sel ? "selected" : ""} ${invSelectable ? "inv-selectable" : ""} ${invSel ? "inv-selected" : ""} ${comprado ? "comprado" : ""}" data-id="${o.id}">
+    <div class="card ${selectable ? "selectable" : ""} ${sel ? "selected" : ""} ${invSelectable ? "inv-selectable" : ""} ${invSel ? "inv-selected" : ""} ${compradoOnline ? "comprado" : ""} ${compradoDirecta ? "comprado-directa" : ""}" data-id="${o.id}">
       ${selectable ? `<span class="card-check">${sel ? "✓" : ""}</span>` : ""}
       ${invSelectable ? `<span class="inv-check" data-inv="${o.id}" title="Marcar para facturar">${invSel ? "✓" : ""}</span>` : ""}
       <div class="row1">
@@ -779,8 +924,9 @@ function cardHTML(o, sel, invSel) {
         <span class="city">${escapeHtml(c.ciudad || "")}</span>
         <span class="saldo-tag ${saldoCls}">${saldoTag}</span>
       </div>
-      ${comprado ? `<div class="guia comprado-tag">✅ Comprado · falta recibir</div>` : ""}
-      ${o.tienda && (o.status === "por_comprar_online" || o.status === "por_comprar_tienda") ? `<div class="guia">🛍️ ${escapeHtml(o.tienda)}</div>` : ""}
+      ${compradoOnline ? `<div class="guia comprado-tag">✅ Comprado · falta recibir</div>` : ""}
+      ${compradoDirecta ? `<div class="guia comprado-tag azul">✈️ Comprado · viaja directo a Cúcuta</div>` : ""}
+      ${o.tienda && (o.status === "por_comprar_online" || o.status === "por_comprar_tienda" || o.status === "compra_directa") ? `<div class="guia">🛍️ ${escapeHtml(o.tienda)}</div>` : ""}
       ${o.guiaUsa ? `<div class="guia">📦 EE.UU.: ${escapeHtml(o.guiaUsa)}</div>` : ""}
       ${o.guia ? `<div class="guia">Guía: ${escapeHtml(o.guia)}</div>`
         : (o.tipoEnvio === "domicilio" ? `<div class="guia">Domicilio</div>` : "")}
@@ -788,16 +934,12 @@ function cardHTML(o, sel, invSel) {
 }
 
 function renderStats() {
-  // La colaboradora (Colombia) solo cuenta pedidos desde "Enviado a Col" en adelante
-  if (CURRENT.role === "colombia") {
-    const start = statusIndex(COLOMBIA_START);
-    const mine = ORDERS.filter(o => statusIndex(o.status) >= start && !isArchived(o));
-    const activos = mine.filter(o => o.status !== "entregado");
-    const porCobrar = mine.reduce((a, o) => a + Math.max(0, saldoDe(o)), 0);
+  // La colaboradora ve el conteo de órdenes, pero NO los totales de dinero
+  if (CURRENT.role !== "admin") {
+    const activos = ORDERS.filter(o => o.status !== "entregado" && !isArchived(o));
     document.getElementById("statsRow").innerHTML = `
-      <div class="stat"><div class="num">${mine.length}</div><div class="lbl">Órdenes totales</div></div>
-      <div class="stat"><div class="num">${activos.length}</div><div class="lbl">En proceso</div></div>
-      <div class="stat money"><div class="num">${COP(porCobrar)}</div><div class="lbl">Saldo por cobrar</div></div>`;
+      <div class="stat"><div class="num">${ORDERS.filter(o => !isArchived(o)).length}</div><div class="lbl">Órdenes totales</div></div>
+      <div class="stat"><div class="num">${activos.length}</div><div class="lbl">En proceso</div></div>`;
     return;
   }
   // Administrador: todas las órdenes
@@ -868,8 +1010,10 @@ function openOrderModal(id) {
   let advanceUI = "";
   if (o.status === "entregado") {
     advanceUI = `<span class="badge done">✓ Proceso completo</span>`;
-  } else if (o.status === "por_comprar_online") {
-    // 2 pasos: 1) marcar comprado (aún no lo tenemos)  2) confirmar recibido físico → Por empacar
+  } else if (o.status === "por_comprar_online" || o.status === "compra_directa") {
+    // 2 pasos: 1) marcar comprado (aún no lo tenemos)  2) confirmar recibido físico
+    // Compra Directa salta a "Recibido Col" (llega directo a Cúcuta); Online va a "Por empacar".
+    const destino = statusLabel(nextStatus(o));
     if (!o.compradoOnline) {
       advanceUI = `<button class="btn-primary" id="compradoBtn">✅ Marcar como comprado</button>`;
     } else {
@@ -877,7 +1021,7 @@ function openOrderModal(id) {
         <div style="width:100%">
           <span class="badge done" style="display:inline-block;margin-bottom:6px">✅ Comprado</span>
           ${costInput}
-          <button class="btn-primary" id="advanceBtn">📦 Confirmar recibido físico → Por empacar</button>
+          <button class="btn-primary" id="advanceBtn">📦 Confirmar recibido físico → ${destino}</button>
         </div>`;
     }
   } else if (o.status === "por_comprar_tienda") {
@@ -959,10 +1103,11 @@ function openOrderModal(id) {
       ${advanceUI}
       ${o.status === "enviado_col" ? `<button class="btn-secondary" id="printBtn">🧾 Imprimir factura</button>` : ""}
       ${o.status === "enviado_col" ? `<button class="btn-secondary" id="waInvBtn">${WA_ICON} Factura WhatsApp</button>` : ""}
-      ${isAdmin && (o.status === "enviado" || o.status === "recibido_col") ? `<button class="btn-secondary" id="boxGuideBtn">✎ Guía de caja</button>` : ""}
-      ${isAdmin && prevStatus(o) ? `<button class="btn-ghost" id="backBtn">← Regresar proceso</button>` : ""}
-      ${isAdmin ? `<button class="btn-secondary" id="editOrderBtn">✎ Editar</button>` : ""}
-      ${isAdmin ? `<button class="btn-ghost" id="deleteOrderBtn" style="color:var(--red);border-color:var(--red)">Eliminar</button>` : ""}
+      ${o.guia ? `<button class="btn-secondary" id="trackBtn">🚚 Rastrear guía</button>` : ""}
+      ${(o.status === "enviado" || o.status === "recibido_col") ? `<button class="btn-secondary" id="boxGuideBtn">✎ Guía de caja</button>` : ""}
+      ${prevStatus(o) ? `<button class="btn-ghost" id="backBtn">← Regresar proceso</button>` : ""}
+      <button class="btn-secondary" id="editOrderBtn">✎ Editar</button>
+      <button class="btn-ghost" id="deleteOrderBtn" style="color:var(--red);border-color:var(--red)">Eliminar</button>
     </div>`;
 
   document.getElementById("orderModal").classList.remove("hidden");
@@ -983,6 +1128,8 @@ function openOrderModal(id) {
   if (waInvBtn) waInvBtn.addEventListener("click", () => whatsappInvoiceOrder(o.id));
   const boxGuideBtn = document.getElementById("boxGuideBtn");
   if (boxGuideBtn) boxGuideBtn.addEventListener("click", () => editBoxGuide(o));
+  const trackBtn = document.getElementById("trackBtn");
+  if (trackBtn) trackBtn.addEventListener("click", () => rastrearGuia(o.guia));
   const addAb = document.getElementById("addAbonoBtn");
   if (addAb) addAb.addEventListener("click", () => addAbono(o.id));
   const nuevoAb = document.getElementById("nuevoAbono");
@@ -1000,20 +1147,33 @@ async function addAbono(id) {
   if (!o) return;
   const monto = parseNum(document.getElementById("nuevoAbono").value);
   if (!monto) { alert("Escribe el valor del abono."); return; }
+  // El abono se aplica hasta cubrir el saldo del pedido; lo que sobre pasa al
+  // "saldo a favor" del cliente (para futuras compras).
+  const saldoActual = Math.max(0, saldoDe(o));
+  const paraOrden = Math.min(monto, saldoActual);
+  const excedente = monto - paraOrden;
   const abonos = getAbonos(o).slice();
-  abonos.push({ monto, fecha: Date.now() });
+  if (paraOrden > 0) abonos.push({ monto: paraOrden, fecha: Date.now() });
   const total = abonos.reduce((a, x) => a + (Number(x.monto) || 0), 0);
+  const cli = CLIENTS.find(c => c.numero === (o.cliente || {}).numero);
+  const nuevoCredito = (excedente > 0 && cli) ? (Number(cli.creditoFavor) || 0) + excedente : null;
 
   if (!FIREBASE_READY) {
     const i = ORDERS.findIndex(x => x.id === id);
     ORDERS[i].abonos = abonos; ORDERS[i].abono = total; ORDERS[i].updatedAt = Date.now();
-    saveLocal(); renderAllLocal(); openOrderModal(id);
+    if (nuevoCredito != null) { const ci = CLIENTS.findIndex(c => c.id === cli.id); if (ci >= 0) CLIENTS[ci].creditoFavor = nuevoCredito; }
+    saveLocal(); renderAllLocal();
+    if (excedente > 0) alert(`Se aplicó ${COP(paraOrden)} al pedido y ${COP(excedente)} quedó como saldo a favor del cliente.`);
+    openOrderModal(id);
     return;
   }
   try {
-    await db.collection("ordenes").doc(id).update({
-      abonos, abono: total, updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
-    });
+    const batch = db.batch();
+    batch.update(db.collection("ordenes").doc(id), {
+      abonos, abono: total, updatedAt: firebase.firestore.FieldValue.serverTimestamp() });
+    if (nuevoCredito != null) batch.update(db.collection("clientes").doc(cli.id), { creditoFavor: nuevoCredito });
+    await batch.commit();
+    if (excedente > 0) alert(`Se aplicó ${COP(paraOrden)} al pedido y ${COP(excedente)} quedó como saldo a favor del cliente.`);
     setTimeout(() => openOrderModal(id), 250);
   } catch (e) { alert("No se pudo registrar el abono: " + e.message); }
 }
@@ -1023,10 +1183,9 @@ async function advanceStatus(o) {
   if (!next) return;
 
   let guia = null, tipoEnvio = null, guiaUsa = null, costoUsd = null;
-  if (next === "por_empacar") {
-    const cv = document.getElementById("costoAdvInput");
-    if (cv) costoUsd = Number((cv.value || "").replace(/[^0-9.]/g, "")) || 0;
-  }
+  // Costo en USD: se captura siempre que el campo esté presente (Por empacar o Compra Directa)
+  const cv = document.getElementById("costoAdvInput");
+  if (cv) costoUsd = Number((cv.value || "").replace(/[^0-9.]/g, "")) || 0;
   if (next === "enviado") {
     guiaUsa = (document.getElementById("guiaUsaInput")?.value || "").trim();  // opcional
   }
@@ -1088,16 +1247,22 @@ async function regresarStatus(o) {
   if (!prev) return;
   if (!confirm(`¿Regresar este pedido a "${statusLabel(prev)}"?`)) return;
 
+  // Si vuelve ANTES de "Enviado a Col", se desliga de la caja (deja de aparecer en ella)
+  const dejaCaja = statusIndex(prev) < statusIndex("enviado") && !!o.guiaUsa;
+
   if (!FIREBASE_READY) {
     const i = ORDERS.findIndex(x => x.id === o.id);
-    if (i >= 0) { ORDERS[i].status = prev; ORDERS[i].updatedAt = Date.now(); }
+    if (i >= 0) {
+      ORDERS[i].status = prev; ORDERS[i].updatedAt = Date.now();
+      if (dejaCaja) { ORDERS[i].guiaUsa = ""; }
+    }
     saveLocal(); renderAllLocal(); closeModal();
     return;
   }
   try {
-    await db.collection("ordenes").doc(o.id).update({
-      status: prev, updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
-    });
+    const upd = { status: prev, updatedAt: firebase.firestore.FieldValue.serverTimestamp() };
+    if (dejaCaja) upd.guiaUsa = firebase.firestore.FieldValue.delete();
+    await db.collection("ordenes").doc(o.id).update(upd);
     closeModal();
   } catch (e) { alert("No se pudo regresar: " + e.message); }
 }
@@ -1300,7 +1465,15 @@ async function saveOrder(e) {
 
   cliente.numero = existing ? existing.numero : nextClientNumber();
   const esClienteNuevo = !existing;   // solo se agrega a la base si de verdad es nuevo
-  const initStatus = tipoCompra === "online" ? "por_comprar_online" : "por_comprar_tienda";
+  const initStatus = tipoCompra === "online" ? "por_comprar_online"
+    : tipoCompra === "directa" ? "compra_directa" : "por_comprar_tienda";
+
+  // Saldo a favor del cliente: al crear una orden nueva, se aplica el crédito acumulado
+  // como abono automático (hasta el valor del producto). Solo aplica a órdenes nuevas.
+  let creditoUsado = 0;
+  if (!editingOrderId && existing && Number(existing.creditoFavor) > 0) {
+    creditoUsado = Math.min(Number(existing.creditoFavor), valor);
+  }
 
   btn.disabled = true; btn.textContent = "Guardando…";
   try {
@@ -1313,6 +1486,14 @@ async function saveOrder(e) {
       catch { fotoData = null; msg.textContent = "No se pudo procesar la foto; se guarda sin ella."; }
     }
 
+    // Estados que aún permiten cambiar el tipo de compra al editar (aún no comprado)
+    const enCompra = st => ["por_comprar_online", "por_comprar_tienda", "compra_directa"].includes(st);
+    // Abonos de una orden nueva: primero el crédito a favor, luego el abono inicial
+    const abonosNuevos = [];
+    if (creditoUsado > 0) abonosNuevos.push({ monto: creditoUsado, fecha: Date.now(), tipo: "credito" });
+    if (abonoIni > 0) abonosNuevos.push({ monto: abonoIni, fecha: Date.now() });
+    const abonoSum = creditoUsado + abonoIni;
+
     if (FIREBASE_READY) {
       // Editar una orden NO modifica el cliente compartido; solo se agrega si es nuevo
       if (esClienteNuevo) await upsertClient(cliente, null);
@@ -1320,48 +1501,67 @@ async function saveOrder(e) {
         const cur = ORDERS.find(x => x.id === editingOrderId) || {};
         const update = { productName, tienda, valor, cliente, tipoCompra,
           updatedAt: firebase.firestore.FieldValue.serverTimestamp() };
-        if (cur.status === "por_comprar_online" || cur.status === "por_comprar_tienda") update.status = initStatus;
-        if (fotoData) { update.tieneFoto = true; await savePhoto(editingOrderId, fotoData); }
+        if (enCompra(cur.status)) update.status = initStatus;
+        // La foto se guarda ANTES; tieneFoto solo se marca si realmente quedó guardada
+        if (fotoData) {
+          try { await savePhoto(editingOrderId, fotoData); update.tieneFoto = true; photoCache[editingOrderId] = fotoData; }
+          catch (e) { msg.textContent = "La orden se guardó, pero la foto no se pudo subir. Reintenta editándola."; }
+        }
         await db.collection("ordenes").doc(editingOrderId).update(update);
       } else {
-        const abonos = abonoIni > 0 ? [{ monto: abonoIni, fecha: Date.now() }] : [];
-        const ref = await db.collection("ordenes").add({
-          productName, tienda, valor, cliente, tieneFoto: !!fotoData,
-          abonos, abono: abonoIni, tipoCompra, costoUsd: 0, compradoOnline: false,
+        const ref = db.collection("ordenes").doc();   // id primero, para guardar la foto antes
+        let photoOk = false;
+        if (fotoData) {
+          try { await savePhoto(ref.id, fotoData); photoOk = true; photoCache[ref.id] = fotoData; }
+          catch (e) { photoOk = false; }
+        }
+        await ref.set({
+          productName, tienda, valor, cliente, tieneFoto: photoOk,
+          abonos: abonosNuevos, abono: abonoSum, tipoCompra, costoUsd: 0, compradoOnline: false,
           status: initStatus, guia: "", tipoEnvio: null,
           historial: { [initStatus]: firebase.firestore.FieldValue.serverTimestamp() },
           createdAt: firebase.firestore.FieldValue.serverTimestamp(),
           updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
         });
-        if (fotoData) await savePhoto(ref.id, fotoData);
+        // Descontar el crédito a favor usado del cliente
+        if (creditoUsado > 0 && existing) {
+          await db.collection("clientes").doc(existing.id).update({
+            creditoFavor: Math.max(0, Number(existing.creditoFavor || 0) - creditoUsado) });
+        }
       }
     } else {
       if (esClienteNuevo) upsertClientLocal(cliente, null);
       if (editingOrderId) {
         const i = ORDERS.findIndex(o => o.id === editingOrderId);
         if (i >= 0) {
-          const inCompra = ORDERS[i].status === "por_comprar_online" || ORDERS[i].status === "por_comprar_tienda";
-          if (fotoData) savePhotoLocal(editingOrderId, fotoData);
+          const inCompra = enCompra(ORDERS[i].status);
+          let photoOk = false;
+          if (fotoData) { savePhotoLocal(editingOrderId, fotoData); photoCache[editingOrderId] = fotoData; photoOk = true; }
           ORDERS[i] = { ...ORDERS[i], productName, tienda, valor, cliente, tipoCompra,
-            updatedAt: Date.now(), ...(fotoData ? { tieneFoto: true } : {}), ...(inCompra ? { status: initStatus } : {}) };
+            updatedAt: Date.now(), ...(photoOk ? { tieneFoto: true } : {}), ...(inCompra ? { status: initStatus } : {}) };
         }
       } else {
-        const abonos = abonoIni > 0 ? [{ monto: abonoIni, fecha: Date.now() }] : [];
         const id = newLocalId();
-        if (fotoData) savePhotoLocal(id, fotoData);
+        let photoOk = false;
+        if (fotoData) { savePhotoLocal(id, fotoData); photoCache[id] = fotoData; photoOk = true; }
         ORDERS.unshift({
-          id, productName, tienda, valor, cliente, tieneFoto: !!fotoData,
-          abonos, abono: abonoIni, tipoCompra, costoUsd: 0, compradoOnline: false,
+          id, productName, tienda, valor, cliente, tieneFoto: photoOk,
+          abonos: abonosNuevos, abono: abonoSum, tipoCompra, costoUsd: 0, compradoOnline: false,
           status: initStatus, guia: "", tipoEnvio: null,
           historial: { [initStatus]: Date.now() },
           createdAt: Date.now(), updatedAt: Date.now(),
         });
+        if (creditoUsado > 0 && existing) {
+          const ci = CLIENTS.findIndex(c => c.id === existing.id);
+          if (ci >= 0) CLIENTS[ci].creditoFavor = Math.max(0, Number(existing.creditoFavor || 0) - creditoUsado);
+        }
       }
       saveLocal(); renderAllLocal();
     }
 
     msg.className = "form-msg ok";
-    msg.textContent = editingOrderId ? "✓ Orden actualizada." : "✓ Orden creada.";
+    msg.textContent = editingOrderId ? "✓ Orden actualizada."
+      : (creditoUsado > 0 ? `✓ Orden creada. Se aplicó ${COP(creditoUsado)} del saldo a favor del cliente.` : "✓ Orden creada.");
     resetOrderForm();
     setTimeout(() => showView("tablero"), 500);
   } catch (ex) {
@@ -1448,23 +1648,26 @@ function renderClientsTable() {
   document.getElementById("clientsTableWrap").innerHTML = `
     <table>
       <thead><tr>
-        <th>N°</th><th>Nombre</th><th>Teléfono</th><th>Red</th><th>Dirección</th>
-        <th>Barrio</th><th>Ciudad</th><th>Departamento</th><th>Pedidos</th>${isAdmin ? "<th></th>" : ""}
+        <th>N°</th><th>Nombre</th><th>Teléfono</th><th>Ciudad</th><th>Saldo</th><th>Pedidos</th><th></th>
       </tr></thead>
       <tbody>
         ${list.map(c => {
-          const pedidos = ORDERS.filter(o => (o.cliente || {}).numero === c.numero).length;
+          const cuenta = cuentaCliente(c.numero);
+          const saldoTxt = cuenta.saldo > 0 ? `<span class="saldo-tag pend">Debe ${COP(cuenta.saldo)}</span>`
+            : cuenta.credito > 0 ? `<span class="saldo-tag favor">A favor ${COP(cuenta.credito)}</span>`
+            : `<span class="saldo-tag paid">Al día ✓</span>`;
           return `<tr>
           <td><strong>#${c.numero ?? "—"}</strong></td>
           <td>${escapeHtml(c.nombre)}</td>
           <td>${escapeHtml(c.telefono)}</td>
-          <td>${escapeHtml(c.red || "")}</td>
-          <td>${escapeHtml(c.direccion || "")}</td>
-          <td>${escapeHtml(c.barrio || "")}</td>
           <td>${escapeHtml(c.ciudad || "")}</td>
-          <td>${escapeHtml(c.departamento || c.municipio || "")}</td>
-          <td><button class="mini-btn ver" data-ver="${c.numero}">Ver (${pedidos})</button></td>
-          ${isAdmin ? `<td><div class="user-actions"><button class="mini-btn" data-edit="${c.id}">Editar</button><button class="mini-btn del" data-del="${c.id}">Eliminar</button></div></td>` : ""}
+          <td>${saldoTxt}</td>
+          <td><button class="mini-btn ver" data-ver="${c.numero}">Ver (${cuenta.count})</button></td>
+          <td><div class="user-actions">
+            <button class="mini-btn cuenta" data-cuenta="${c.numero}">💳 Cuenta</button>
+            <button class="mini-btn" data-edit="${c.id}">Editar</button>
+            ${isAdmin ? `<button class="mini-btn del" data-del="${c.id}">Eliminar</button>` : ""}
+          </div></td>
         </tr>`; }).join("")}
       </tbody>
     </table>`;
@@ -1476,6 +1679,9 @@ function renderClientsTable() {
       showView("tablero");
       renderBoard();
     }));
+
+  document.querySelectorAll("[data-cuenta]").forEach(b =>
+    b.addEventListener("click", () => openClientAccount(Number(b.dataset.cuenta))));
 
   document.querySelectorAll("[data-edit]").forEach(b =>
     b.addEventListener("click", () => openClientEdit(b.dataset.edit)));
@@ -1575,6 +1781,158 @@ async function saveClientEdit() {
   } finally {
     btn.disabled = false; btn.textContent = "Guardar cambios";
   }
+}
+
+/* ============================================================
+   ESTADO DE CUENTA DEL CLIENTE (unificado)
+   Total que debe + total abonado + saldo a favor. Permite un ABONO GENERAL que se
+   reparte entre los pedidos pendientes (del más antiguo al más nuevo); el sobrante
+   queda como "saldo a favor" para futuras compras. Factura general de todo.
+   ============================================================ */
+function cuentaCliente(numero) {
+  const allOrders = ORDERS.filter(o => (o.cliente || {}).numero === numero);
+  const orders = allOrders.filter(o => !isArchived(o));
+  const valor = orders.reduce((a, o) => a + (o.valor || 0), 0);
+  const abonado = orders.reduce((a, o) => a + abonoTotal(o), 0);
+  const deuda = orders.reduce((a, o) => a + Math.max(0, saldoDe(o)), 0);
+  const cli = CLIENTS.find(c => c.numero === numero) || {};
+  const creditoStored = Number(cli.creditoFavor) || 0;
+  const sobreAbono = orders.reduce((a, o) => a + Math.max(0, -saldoDe(o)), 0);  // datos antiguos con sobre-abono
+  const net = deuda - creditoStored - sobreAbono;   // >0 debe · <0 a favor
+  return {
+    orders, allOrders, valor, abonado, count: allOrders.length, cli, creditoStored,
+    saldo: Math.max(0, net), credito: Math.max(0, -net),
+  };
+}
+
+function accountModalEl() {
+  let m = document.getElementById("accountModal");
+  if (m) return m;
+  m = document.createElement("div");
+  m.id = "accountModal";
+  m.className = "modal hidden";
+  m.innerHTML = `<div class="modal-card">
+    <div class="modal-head"><button class="modal-close" id="closeAccountModal" aria-label="Cerrar">✕</button></div>
+    <div id="accountBody"></div>
+  </div>`;
+  document.body.appendChild(m);
+  m.addEventListener("click", e => { if (e.target.id === "accountModal") m.classList.add("hidden"); });
+  m.querySelector("#closeAccountModal").addEventListener("click", () => m.classList.add("hidden"));
+  return m;
+}
+
+let accountClientNum = null;
+function openClientAccount(numero) {
+  accountClientNum = numero;
+  const m = accountModalEl();
+  const q = cuentaCliente(numero);
+  const c = q.cli;
+  const pendientes = q.orders.filter(o => saldoDe(o) > 0).sort((a, b) => tsMillis(a.createdAt) - tsMillis(b.createdAt));
+  const rows = q.orders.length
+    ? q.orders.map(o => {
+        const s = saldoDe(o);
+        const tag = s > 0 ? `Debe ${COP(s)}` : (s < 0 ? "A favor " + COP(-s) : "Pagado ✓");
+        return `<div class="detail-row"><span class="k">${escapeHtml(o.productName)} · ${statusLabel(o.status)}</span><span>${tag}</span></div>`;
+      }).join("")
+    : `<div class="detail-row"><span class="k">Sin pedidos activos</span><span></span></div>`;
+
+  const saldoLine = q.saldo > 0
+    ? `<div class="detail-row"><span class="k" style="font-weight:700">Saldo pendiente TOTAL</span><span style="font-weight:800;color:var(--red)">${COP(q.saldo)}</span></div>`
+    : q.credito > 0
+      ? `<div class="detail-row"><span class="k" style="font-weight:700">Saldo a favor</span><span style="font-weight:800;color:var(--green,#16a34a)">${COP(q.credito)}</span></div>`
+      : `<div class="detail-row"><span class="k" style="font-weight:700">Estado</span><span style="font-weight:700">Al día ✓</span></div>`;
+
+  m.querySelector("#accountBody").innerHTML = `
+    <h2 style="margin:0 0 2px">💳 Cuenta de #${numero} ${escapeHtml(c.nombre || "")}</h2>
+    <div class="file-note" style="margin-bottom:10px">${escapeHtml(c.telefono || "")}${c.ciudad ? " · " + escapeHtml(c.ciudad) : ""}</div>
+
+    <div class="detail-section-title">Resumen</div>
+    <div class="detail-row"><span class="k">Total productos (${q.orders.length})</span><span>${COP(q.valor)}</span></div>
+    <div class="detail-row"><span class="k">Total abonado</span><span>${COP(q.abonado)}</span></div>
+    ${saldoLine}
+
+    <div class="detail-section-title">Pedidos</div>
+    ${rows}
+
+    <div class="detail-section-title">Registrar abono general</div>
+    <div class="file-note" style="margin-bottom:6px">Se reparte entre los pedidos pendientes (del más antiguo al más nuevo). Lo que sobre queda como saldo a favor del cliente.</div>
+    <div class="guia-input-row">
+      <input type="text" inputmode="numeric" id="abonoGeneralInput" placeholder="Monto del abono (COP)" />
+      <button class="btn-primary" id="aplicarAbonoGeneral">Aplicar</button>
+    </div>
+    <p id="accountMsg" class="form-msg"></p>
+
+    <div class="modal-actions" style="margin-top:14px">
+      <button class="btn-secondary" id="accountPrintBtn">🧾 Factura general</button>
+      ${c.telefono ? `<button class="btn-secondary" id="accountWaBtn">${WA_ICON} Enviar por WhatsApp</button>` : ""}
+    </div>`;
+
+  m.classList.remove("hidden");
+
+  const inp = m.querySelector("#abonoGeneralInput");
+  if (inp) inp.addEventListener("input", e => { e.target.value = fmtThousands(e.target.value); });
+  m.querySelector("#aplicarAbonoGeneral").addEventListener("click", () => aplicarAbonoGeneral(numero));
+  m.querySelector("#accountPrintBtn").addEventListener("click", () => printAccountInvoice(numero));
+  const wab = m.querySelector("#accountWaBtn");
+  if (wab) wab.addEventListener("click", () => whatsappAccountInvoice(numero));
+}
+
+// Reparte un abono general entre los pedidos pendientes; el sobrante → saldo a favor
+async function aplicarAbonoGeneral(numero) {
+  const m = document.getElementById("accountModal");
+  const monto = parseNum(document.getElementById("abonoGeneralInput").value);
+  const msg = document.getElementById("accountMsg"); msg.className = "form-msg";
+  if (!monto) { msg.className = "form-msg err"; msg.textContent = "Escribe el monto del abono."; return; }
+
+  const q = cuentaCliente(numero);
+  const pendientes = q.orders.filter(o => saldoDe(o) > 0)
+    .sort((a, b) => tsMillis(a.createdAt) - tsMillis(b.createdAt));
+  let pool = monto;
+  const cambios = [];   // { id, abonos, total }
+  for (const o of pendientes) {
+    if (pool <= 0) break;
+    const s = saldoDe(o);
+    const pay = Math.min(pool, s);
+    if (pay <= 0) continue;
+    const abonos = getAbonos(o).slice();
+    abonos.push({ monto: pay, fecha: Date.now(), tipo: "general" });
+    cambios.push({ id: o.id, abonos, total: abonos.reduce((a, x) => a + (Number(x.monto) || 0), 0) });
+    pool -= pay;
+  }
+  const nuevoCredito = Number(q.creditoStored || 0) + pool;   // sobrante → saldo a favor
+
+  try {
+    if (!FIREBASE_READY) {
+      cambios.forEach(ch => { const i = ORDERS.findIndex(o => o.id === ch.id); if (i >= 0) { ORDERS[i].abonos = ch.abonos; ORDERS[i].abono = ch.total; } });
+      if (q.cli.id) { const ci = CLIENTS.findIndex(c => c.id === q.cli.id); if (ci >= 0) CLIENTS[ci].creditoFavor = nuevoCredito; }
+      saveLocal(); renderAllLocal();
+    } else {
+      const batch = db.batch();
+      cambios.forEach(ch => batch.update(db.collection("ordenes").doc(ch.id), {
+        abonos: ch.abonos, abono: ch.total, updatedAt: firebase.firestore.FieldValue.serverTimestamp() }));
+      if (q.cli.id) batch.update(db.collection("clientes").doc(q.cli.id), { creditoFavor: nuevoCredito });
+      await batch.commit();
+    }
+    msg.className = "form-msg ok";
+    msg.textContent = pool > 0
+      ? `✓ Abono aplicado. Quedan ${COP(pool)} como saldo a favor.`
+      : "✓ Abono aplicado a los pedidos pendientes.";
+    setTimeout(() => openClientAccount(numero), 400);
+  } catch (e) { msg.className = "form-msg err"; msg.textContent = "Error: " + (e.message || e.code); }
+}
+
+function printAccountInvoice(numero) {
+  const q = cuentaCliente(numero);
+  if (!q.orders.length) { alert("Este cliente no tiene pedidos activos."); return; }
+  const t = invoiceTicketMulti(q.orders, q.cli);
+  printDocsSeparadas([t, t]);
+}
+function whatsappAccountInvoice(numero) {
+  const q = cuentaCliente(numero);
+  if (!q.orders.length) { alert("Este cliente no tiene pedidos activos."); return; }
+  if (!q.cli.telefono) { alert("Este cliente no tiene teléfono registrado."); return; }
+  const url = waLink(q.cli.telefono) + "?text=" + encodeURIComponent(buildInvoiceText(q.orders, q.cli));
+  window.open(url, "_blank");
 }
 
 /* ============================================================
@@ -1999,7 +2357,7 @@ function invoiceDocWrap(inner) {
   </style></head><body>${inner}</body></html>`;
 }
 
-// Imprime en impresora térmica de 80 mm (2 copias por separado)
+// Imprime en impresora térmica de 80 mm
 function printDoc(inner) {
   const ifr = document.createElement("iframe");
   ifr.style.cssText = "position:fixed;right:0;bottom:0;width:0;height:0;border:0;";
@@ -2011,11 +2369,30 @@ function printDoc(inner) {
   ifr.srcdoc = invoiceDocWrap(inner);
 }
 
+// Imprime varios tickets como trabajos de impresión SEPARADOS (cada uno es un
+// recibo independiente en la impresora térmica, no todos pegados en una sola hoja).
+function printDocsSeparadas(tickets) {
+  let i = 0;
+  const next = () => {
+    if (i >= tickets.length) return;
+    const inner = tickets[i++];
+    const ifr = document.createElement("iframe");
+    ifr.style.cssText = "position:fixed;right:0;bottom:0;width:0;height:0;border:0;";
+    document.body.appendChild(ifr);
+    ifr.onload = () => {
+      try { ifr.contentWindow.focus(); ifr.contentWindow.print(); } catch (e) { alert("No se pudo imprimir: " + e.message); }
+      setTimeout(() => { ifr.remove(); next(); }, 1200);   // siguiente copia tras cerrar la anterior
+    };
+    ifr.srcdoc = invoiceDocWrap(inner);
+  };
+  next();
+}
+
 function printInvoice(id) {
   const o = ORDERS.find(x => x.id === id);
   if (!o) return;
   const t = invoiceTicket(o);
-  printDoc(t + t);
+  printDocsSeparadas([t, t]);   // 2 copias, cada una en su propio recibo
 }
 
 // Texto de la factura para enviar por WhatsApp
@@ -2072,7 +2449,71 @@ function printInvoiceClient(numero) {
   const marcados = grupo.filter(o => invoiceSelection.has(o.id));
   const orders = marcados.length ? marcados : grupo;
   const t = invoiceTicketMulti(orders, orders[0].cliente || {});
-  printDoc(t + t);
+  printDocsSeparadas([t, t]);   // 2 copias, cada una en su propio recibo
+}
+
+/* ============================================================
+   RASTREO DE GUÍAS (Interrapidísimo)
+   Usa la Cloud Function ya desplegada (misma que Bodega Titan): solo consulta el
+   estado de un número de guía en Interrapidísimo, no toca datos de este proyecto.
+   ============================================================ */
+const CF_RASTREO_URL = "https://us-central1-bodegatitan-2d932.cloudfunctions.net/rastrearGuiaHttp";
+
+function trackModalEl() {
+  let m = document.getElementById("trackModal");
+  if (m) return m;
+  m = document.createElement("div");
+  m.id = "trackModal";
+  m.className = "modal hidden";
+  m.innerHTML = `
+    <div class="modal-card" style="max-width:420px">
+      <div class="modal-head"><button class="modal-close" id="closeTrackModal" aria-label="Cerrar">✕</button></div>
+      <h2 style="margin:0 0 4px">🚚 Rastreo de guía</h2>
+      <div id="trackSub" class="file-note" style="margin-bottom:10px"></div>
+      <div id="trackContent" style="min-height:120px"></div>
+      <div class="form-actions" style="margin-top:14px">
+        <a id="trackWebLink" class="btn-secondary" target="_blank" rel="noopener" href="#">Ver en Interrapidísimo ↗</a>
+      </div>
+    </div>`;
+  document.body.appendChild(m);
+  m.addEventListener("click", e => { if (e.target.id === "trackModal") m.classList.add("hidden"); });
+  m.querySelector("#closeTrackModal").addEventListener("click", () => m.classList.add("hidden"));
+  return m;
+}
+
+async function rastrearGuia(numero) {
+  const num = String(numero || "").trim();
+  if (!num) { alert("Este pedido no tiene número de guía."); return; }
+  const m = trackModalEl();
+  m.querySelector("#trackSub").textContent = "Guía " + num + " · Interrapidísimo";
+  m.querySelector("#trackWebLink").href = "https://siguetuenvio.interrapidisimo.com/" + encodeURIComponent(num);
+  m.querySelector("#trackContent").innerHTML =
+    `<div style="text-align:center;padding:28px 12px;color:var(--muted)">⏳ Consultando Interrapidísimo…</div>`;
+  m.classList.remove("hidden");
+
+  try {
+    const timeout = ms => new Promise((_, r) => setTimeout(() => r(new Error("timeout")), ms));
+    const r = await Promise.race([fetch(`${CF_RASTREO_URL}?numero=${encodeURIComponent(num)}`), timeout(20000)]);
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    const data = await r.json();
+    if (!data.ok) throw new Error(data.error || "Sin información");
+    const estado = (data.estadoTexto || data.estadoActual || "En proceso").toString();
+    const ciudad = data.ciudadDestino || "";
+    const fecha = data.fechaEstimadaEntrega ? String(data.fechaEstimadaEntrega).slice(0, 10) : "";
+    const entregado = /entregad/i.test(estado);
+    m.querySelector("#trackContent").innerHTML = `
+      <div style="text-align:center;padding:10px 6px">
+        <div style="width:60px;height:60px;border-radius:50%;margin:0 auto 12px;display:flex;align-items:center;justify-content:center;font-size:26px;background:${entregado ? "#dcfce7" : "#e0e7ff"}">${entregado ? "✅" : "🚚"}</div>
+        <div style="font-size:16px;font-weight:700">${escapeHtml(estado)}</div>
+        ${ciudad ? `<div style="color:var(--muted);margin-top:4px">Destino: ${escapeHtml(ciudad)}</div>` : ""}
+        ${fecha ? `<div style="color:var(--muted);margin-top:2px">Entrega estimada: ${escapeHtml(fecha)}</div>` : ""}
+      </div>`;
+  } catch (e) {
+    m.querySelector("#trackContent").innerHTML =
+      `<div style="text-align:center;padding:20px 12px;color:var(--red)">
+        No se pudo consultar el estado automáticamente.<br>Usa el botón de abajo para verlo en Interrapidísimo.
+      </div>`;
+  }
 }
 
 /* ============================================================

@@ -410,6 +410,25 @@ td .mini-btn:hover { color: #fff; background: var(--red); border-color: var(--re
 .card.comprado { border-color: #2f9e44; background: #f0fbf3; }
 .comprado-tag { color: #2f7a3a !important; font-weight: 700; }
 
+/* Tarjeta "comprado" en Compra Directa (comprada, viaja directo a Cúcuta) — azul */
+.card.comprado-directa { border-color: #2563eb; background: #eff4ff; }
+.comprado-tag.azul { color: #1d4ed8 !important; }
+
+/* Barra de avance en grupo (Enviado a Col / Recibido Col / Despachado) */
+.col-advance { margin: 2px 0 6px; display: flex; flex-direction: column; gap: 3px; }
+.btn-advance {
+  width: 100%; background: var(--accent); color: #fff; border: none; border-radius: 8px;
+  padding: 9px 10px; font-size: 13px; font-weight: 700; cursor: pointer; font-family: inherit;
+}
+.btn-advance:disabled { background: var(--line-strong); color: var(--muted); cursor: default; }
+.col-advance-hint { font-size: 11px; color: var(--muted-2); text-align: center; }
+
+/* Etiquetas de saldo fuera de las tarjetas (tabla de clientes) */
+.saldo-tag.pend { color: var(--text); font-weight: 700; }
+.saldo-tag.paid { color: var(--muted); font-weight: 600; }
+.saldo-tag.favor { color: #2f7a3a; font-weight: 700; }
+.mini-btn.cuenta { border-color: var(--accent); color: var(--accent); }
+
 /* Botón WhatsApp en el detalle */
 .wa-btn {
   display: inline-flex; align-items: center; gap: 4px;

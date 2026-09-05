@@ -41,7 +41,7 @@
       <div class="brand"><img class="brand-mark" src="logo.svg" alt="" /> <span>ARMADIUSA</span></div>
       <nav class="tabs">
         <button class="tab active" data-view="tablero">Tablero</button>
-        <button class="tab" data-view="nueva" data-role="admin">＋ Nueva orden</button>
+        <button class="tab" data-view="nueva">＋ Nueva orden</button>
         <button class="tab" data-view="clientes">Clientes</button>
         <button class="tab" data-view="historial">Historial</button>
         <button class="tab" data-view="dashboard" data-role="admin">Dashboard</button>
@@ -76,7 +76,9 @@
               <div class="radio-row">
                 <label class="radio"><input type="radio" name="tipoCompra" value="tienda" /> Compra en tienda</label>
                 <label class="radio"><input type="radio" name="tipoCompra" value="online" /> Compra Online</label>
+                <label class="radio"><input type="radio" name="tipoCompra" value="directa" /> Compra Directa</label>
               </div>
+              <span class="file-note">Compra Directa: se compra en EE.UU. y llega directo a Cúcuta (no pasa por empaque ni envío a bodega).</span>
             </div>
             <div class="grid-2">
               <label>Nombre / descripción del producto *
@@ -165,7 +167,7 @@
       <section id="view-clientes" class="view hidden">
         <div class="toolbar">
           <input type="search" id="searchClients" placeholder="Buscar cliente por nombre, N°, teléfono o ciudad…" />
-          <button id="exportClientsBtn" class="btn-secondary" data-role="admin">⬇ Exportar clientes (Excel)</button>
+          <button id="exportClientsBtn" class="btn-secondary">⬇ Exportar clientes (Excel)</button>
         </div>
         <div id="clientsTableWrap" class="table-wrap"></div>
       </section>
@@ -174,7 +176,7 @@
       <section id="view-historial" class="view hidden">
         <div class="toolbar">
           <input type="search" id="searchHistorial" placeholder="Buscar en historial por cliente, producto o guía…" />
-          <button id="exportHistorialBtn" class="btn-secondary" data-role="admin">⬇ Exportar historial (Excel)</button>
+          <button id="exportHistorialBtn" class="btn-secondary">⬇ Exportar historial (Excel)</button>
         </div>
         <p class="section-note">Los pedidos <strong>entregados</strong> pasan aquí automáticamente al día siguiente, para no saturar el tablero de procesos.</p>
         <div id="historialWrap"></div>
