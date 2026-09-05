@@ -24,7 +24,7 @@ const STATUSES = [
   { key: "por_enviar",   label: "Por enviar",   color: "#71717a" },
   { key: "enviado",      label: "Enviado a Col", color: "#5c5c64" },
   { key: "recibido_col", label: "Recibido Col", color: "#46464d" },
-  { key: "enviado_col",  label: "Despachado",   color: "#2f2f35" },
+  { key: "enviado_col",  label: "Por despachar", color: "#2f2f35" },
   { key: "entregado",    label: "Entregado",    color: "#18181b" },
 ];
 const STATUS_MAP = Object.fromEntries(STATUSES.map(s => [s.key, s]));
@@ -776,8 +776,8 @@ async function advanceSelected(statusKey) {
   if (!nk) return;
   if (!confirm(`¿Avanzar ${ids.length} producto(s) de "${statusLabel(statusKey)}" a "${statusLabel(nk)}"?`)) return;
 
-  // Al pasar de "Recibido Col" a "Despachado" se marca el envío por defecto (Interrapidísimo)
-  const setEnvio = nk === "enviado_col";
+  // Al despachar (pasar de "Por despachar" a "Entregado") se marca el envío por defecto (Interrapidísimo)
+  const setEnvio = nk === "entregado";
 
   if (!FIREBASE_READY) {
     const now = Date.now();
@@ -1044,17 +1044,21 @@ function openOrderModal(id) {
         <span class="file-note">Si varios productos van en la misma caja, usa el mismo número: se agruparán juntos.</span>
       </div>`;
   } else if (o.status === "recibido_col") {
-    // Paso a "Enviado Col": elegir tipo de envío; guía opcional
+    // Paso a "Por despachar" (el tipo de envío se elige YA en Por despachar)
+    advanceUI = `<button class="btn-primary" id="advanceBtn">Avanzar a: ${statusLabel("enviado_col")} →</button>`;
+  } else if (o.status === "enviado_col") {
+    // En "Por despachar" se elige cómo se despacha: Interrapidísimo o Domicilio (+ guía)
+    const envSel = o.tipoEnvio === "domicilio" ? "domicilio" : "interrapidisimo";
     advanceUI = `
       <div style="width:100%">
         <div class="detail-section-title">Envío en Colombia</div>
         <div class="radio-row">
-          <label class="radio"><input type="radio" name="tipoEnvio" value="interrapidisimo" checked /> Interrapidísimo</label>
-          <label class="radio"><input type="radio" name="tipoEnvio" value="domicilio" /> Domicilio</label>
+          <label class="radio"><input type="radio" name="tipoEnvio" value="interrapidisimo" ${envSel === "interrapidisimo" ? "checked" : ""} /> Interrapidísimo</label>
+          <label class="radio"><input type="radio" name="tipoEnvio" value="domicilio" ${envSel === "domicilio" ? "checked" : ""} /> Domicilio</label>
         </div>
         <div class="guia-input-row" style="margin-top:8px">
           <input type="text" id="guiaInput" placeholder="N° de guía (opcional)" value="${escapeHtml(o.guia || "")}" />
-          <button class="btn-primary" id="advanceBtn">Marcar ${statusLabel("enviado_col")} →</button>
+          <button class="btn-primary" id="advanceBtn">📮 Despachar → ${statusLabel("entregado")}</button>
         </div>
       </div>`;
   } else {
@@ -1189,7 +1193,9 @@ async function advanceStatus(o) {
   if (next === "enviado") {
     guiaUsa = (document.getElementById("guiaUsaInput")?.value || "").trim();  // opcional
   }
-  if (next === "enviado_col") {
+  // El tipo de envío (Interrapidísimo/Domicilio) y la guía se eligen en "Por despachar",
+  // es decir al despachar (paso enviado_col → entregado).
+  if (o.status === "enviado_col" && next === "entregado") {
     const t = document.querySelector("input[name='tipoEnvio']:checked");
     tipoEnvio = t ? t.value : "interrapidisimo";
     guia = (document.getElementById("guiaInput")?.value || "").trim();  // opcional
@@ -2423,7 +2429,7 @@ function buildInvoiceText(orders, c) {
 function whatsappInvoiceClient(numero) {
   const grupo = ORDERS.filter(o => o.status === "enviado_col"
     && String((o.cliente || {}).numero) === String(numero) && !isArchived(o));
-  if (!grupo.length) { alert("Ese cliente no tiene productos en Despachado."); return; }
+  if (!grupo.length) { alert("Ese cliente no tiene productos en Por despachar."); return; }
   const marcados = grupo.filter(o => invoiceSelection.has(o.id));
   const orders = marcados.length ? marcados : grupo;
   const c = orders[0].cliente || {};
@@ -2445,7 +2451,7 @@ function whatsappInvoiceOrder(id) {
 function printInvoiceClient(numero) {
   const grupo = ORDERS.filter(o => o.status === "enviado_col"
     && String((o.cliente || {}).numero) === String(numero) && !isArchived(o));
-  if (!grupo.length) { alert("Ese cliente no tiene productos en Despachado."); return; }
+  if (!grupo.length) { alert("Ese cliente no tiene productos en Por despachar."); return; }
   const marcados = grupo.filter(o => invoiceSelection.has(o.id));
   const orders = marcados.length ? marcados : grupo;
   const t = invoiceTicketMulti(orders, orders[0].cliente || {});
