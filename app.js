@@ -606,6 +606,7 @@ function colBodyHTML(list, statusKey) {
           <span class="box-selall ${allSel ? "on" : ""}" data-selall="${escapeHtml(g)}" data-selstatus="enviado" title="Seleccionar toda la caja">${allSel ? "✓" : ""}</span>
           <span class="box-name">📦 ${fecha ? fecha + " · " : ""}${escapeHtml(g)}</span>
           <span class="box-count">${groups[g].length}</span>
+          <button class="box-advance" data-advgroup="${escapeHtml(g)}" data-advstatus="enviado" title="Avanzar toda la caja al siguiente proceso">➡</button>
           <button class="box-edit" data-boxedit="${escapeHtml(g)}" title="Editar nombre / N° de guía de la caja">✎</button>
         </div>
         ${open ? `<div class="box-items">${groups[g].map(o => cardHTML(o, undefined, invoiceSelection.has(o.id))).join("")}</div>` : ""}
@@ -642,6 +643,7 @@ function groupedByClient(list, statusKey) {
           ${selectable ? `<span class="box-selall ${allSel ? "on" : ""}" data-selall="${escapeHtml(gkey)}" data-selstatus="${statusKey}" title="Seleccionar todo el cliente">${allSel ? "✓" : ""}</span>` : ""}
           <span class="box-name">👤 #${c.numero ?? "—"} ${escapeHtml(c.nombre || "")}</span>
           <span class="box-count">${items.length}</span>
+          ${selectable ? `<button class="box-advance" data-advgroup="${escapeHtml(gkey)}" data-advstatus="${statusKey}" title="Avanzar todo el cliente al siguiente proceso">➡</button>` : ""}
           ${withInvoice ? `<button class="box-invoice" data-invcli="${escapeHtml(k)}" title="Imprimir factura (marcados o todos)">🧾</button>
           <button class="box-wa" data-wacli="${escapeHtml(k)}" title="Enviar factura por WhatsApp">${WA_ICON}</button>` : ""}
         </div>
@@ -698,7 +700,7 @@ function renderBoard() {
   // Plegar/desplegar grupos (cajas o clientes)
   board.querySelectorAll(".box-group-head").forEach(h =>
     h.addEventListener("click", e => {
-      if (e.target.closest(".box-edit") || e.target.closest(".box-invoice") || e.target.closest(".box-wa") || e.target.closest(".box-selall")) return;
+      if (e.target.closest(".box-edit") || e.target.closest(".box-invoice") || e.target.closest(".box-wa") || e.target.closest(".box-selall") || e.target.closest(".box-advance")) return;
       const g = h.dataset.gkey;
       // Solo UNA caja abierta a la vez: al abrir otra, se cierra la anterior
       if (expandedBoxes.has(g)) { expandedBoxes.delete(g); }
@@ -724,6 +726,8 @@ function renderBoard() {
       else ids.forEach(id => invoiceSelection.add(id));
       renderBoard();
     }));
+  board.querySelectorAll(".box-advance").forEach(el =>
+    el.addEventListener("click", e => { e.stopPropagation(); advanceGroup(el.dataset.advstatus, el.dataset.advgroup); }));
 
   // Búsqueda por columna
   board.querySelectorAll(".col-search").forEach(inp =>
@@ -789,11 +793,9 @@ function updateAdvanceBars() {
   });
 }
 
-// Avanza TODOS los productos marcados de una columna al siguiente proceso
-async function advanceSelected(statusKey) {
-  const ids = [...invoiceSelection].filter(id => {
-    const o = ORDERS.find(x => x.id === id); return o && o.status === statusKey;
-  });
+// Avanza una lista de productos (ids) de una columna al siguiente proceso
+async function advanceOrders(ids, statusKey) {
+  ids = ids.filter(id => { const o = ORDERS.find(x => x.id === id); return o && o.status === statusKey; });
   if (!ids.length) return;
   const nk = nextStatus({ status: statusKey, tipoCompra: "tienda" });
   if (!nk) return;
@@ -810,7 +812,7 @@ async function advanceSelected(statusKey) {
       ORDERS[i].historial = { ...(ORDERS[i].historial || {}), [nk]: now };
       if (setEnvio && !ORDERS[i].tipoEnvio) { ORDERS[i].tipoEnvio = "interrapidisimo"; ORDERS[i].rastreoActivo = true; }
     });
-    invoiceSelection.clear();
+    ids.forEach(id => invoiceSelection.delete(id));
     saveLocal(); renderAllLocal();
     return;
   }
@@ -831,8 +833,21 @@ async function advanceSelected(statusKey) {
       });
       await batch.commit();
     }
-    invoiceSelection.clear();
+    ids.forEach(id => invoiceSelection.delete(id));
   } catch (e) { alert("No se pudieron avanzar: " + e.message); }
+}
+
+// Avanza TODOS los productos MARCADOS de una columna (con check individual o de grupo)
+function advanceSelected(statusKey) {
+  const ids = [...invoiceSelection].filter(id => {
+    const o = ORDERS.find(x => x.id === id); return o && o.status === statusKey;
+  });
+  return advanceOrders(ids, statusKey);
+}
+
+// Avanza TODO un grupo (cliente o caja) de un solo clic, sin tener que marcarlo
+function advanceGroup(statusKey, gkey) {
+  return advanceOrders(groupOrderIds(statusKey, gkey), statusKey);
 }
 
 function toggleBoxSelect(id) {
