@@ -593,10 +593,11 @@ function colBodyHTML(list, statusKey) {
   }
   // Enviado a Col: agrupar por CAJA (guía de EE.UU.) + avance múltiple
   if (statusKey === "enviado") {
+    const forceOpen = clientFilter != null || (colSearch[statusKey] || "").trim() !== "";
     const groups = {}; const solos = [];
     list.forEach(o => { if (o.guiaUsa) (groups[o.guiaUsa] = groups[o.guiaUsa] || []).push(o); else solos.push(o); });
     let html = Object.keys(groups).map(g => {
-      const open = expandedBoxes.has(g);
+      const open = expandedBoxes.has(g) || forceOpen;
       const fecha = boxFechaLabel(groups[g]);
       const allSel = groups[g].every(o => invoiceSelection.has(o.id));
       return `
@@ -630,11 +631,13 @@ function groupedByClient(list, statusKey) {
   });
   const withInvoice = statusKey === "enviado_col";
   const selectable = statusKey === "recibido_col" || statusKey === "enviado_col";  // checkbox para avanzar en grupo
+  // Con un filtro por cliente o una búsqueda activa, los grupos se muestran ABIERTOS
+  const forceOpen = clientFilter != null || (colSearch[statusKey] || "").trim() !== "";
   const html = Object.keys(groups).map(k => {
     const items = groups[k];
     const c = items[0].cliente || {};
     const gkey = "cli:" + statusKey + ":" + k;
-    const open = expandedBoxes.has(gkey);
+    const open = expandedBoxes.has(gkey) || forceOpen;
     const allSel = selectable && items.every(o => invoiceSelection.has(o.id));
     return `
       <div class="box-group ${open ? "open" : ""}">
