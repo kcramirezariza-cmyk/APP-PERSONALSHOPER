@@ -83,6 +83,12 @@ const fmtDay = ts => {
   return new Date(m).toLocaleDateString("es-CO", { weekday: "long", day: "2-digit", month: "long", year: "numeric" });
 };
 const startOfToday = () => { const d = new Date(); d.setHours(0, 0, 0, 0); return d.getTime(); };
+// Fecha y hora actual (para el momento de imprimir la factura)
+const fmtPrintNow = () => {
+  const d = new Date();
+  return d.toLocaleDateString("es-CO", { day: "2-digit", month: "2-digit", year: "numeric" }) +
+         " " + d.toLocaleTimeString("es-CO", { hour: "2-digit", minute: "2-digit" });
+};
 const escapeHtml = s => (s == null ? "" : String(s).replace(/[&<>"']/g,
   c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])));
 // Enlace de WhatsApp (asume móvil colombiano de 10 dígitos → agrega 57)
@@ -2423,6 +2429,7 @@ function invoiceTicket(o) {
       <div class="logo">${LOGO_SVG}</div>
       <div class="brand">ARMADIUSA</div>
       <div class="tag">PERSONAL SHOPPER</div>
+      <div class="fecha-print">Impreso: ${fmtPrintNow()}</div>
       <div class="rule"></div>
       <div class="prod">${escapeHtml(o.productName)}</div>
       <div class="ln"><span>Valor del producto</span><span>${COP(o.valor)}</span></div>
@@ -2466,6 +2473,7 @@ function invoiceTicketMulti(orders, c) {
       <div class="logo">${LOGO_SVG}</div>
       <div class="brand">ARMADIUSA</div>
       <div class="tag">PERSONAL SHOPPER</div>
+      <div class="fecha-print">Impreso: ${fmtPrintNow()}</div>
       <div class="rule"></div>
       <div class="chdr">PRODUCTOS (${orders.length})</div>
       ${prodRows}
@@ -2507,7 +2515,8 @@ function invoiceDocWrap(inner) {
     .logo{ text-align:center; line-height:0; }
     .logo svg{ height:15mm; }
     .brand{ text-align:center; font-weight:800; font-size:15pt; letter-spacing:2px; margin-top:1mm; }
-    .tag{ text-align:center; font-size:7.5pt; letter-spacing:2px; margin-bottom:2mm; }
+    .tag{ text-align:center; font-size:7.5pt; letter-spacing:2px; margin-bottom:1mm; }
+    .fecha-print{ text-align:center; font-size:7.5pt; margin-bottom:1mm; }
     .rule{ border-top:1px dashed #000; margin:2.4mm 0; }
     .prod{ font-weight:700; font-size:11pt; text-align:center; margin-bottom:2mm; }
     .ln{ display:flex; justify-content:space-between; gap:4mm; font-size:9pt; padding:0.6mm 0; }
