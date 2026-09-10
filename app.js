@@ -442,7 +442,12 @@ function nextClientNumber() {
    ============================================================ */
 function setupNav() {
   document.querySelectorAll(".tab").forEach(tab => {
-    tab.addEventListener("click", () => showView(tab.dataset.view));
+    tab.addEventListener("click", () => {
+      // Al hacer clic en la pestaña "Nueva orden" SIEMPRE se empieza una orden en blanco
+      // (evita quedar "atrapado" editando un pedido anterior o con datos viejos).
+      if (tab.dataset.view === "nueva") resetOrderForm();
+      showView(tab.dataset.view);
+    });
   });
 }
 function showView(view) {
@@ -478,12 +483,14 @@ function getFilteredOrders() {
   });
 }
 
-// ¿Coincide una orden con el texto de búsqueda?
+// ¿Coincide una orden con el texto de búsqueda? El N° de cliente es EXACTO ("#32"→solo 32).
 function orderMatches(o, q) {
   if (!q) return true;
   const c = (o && o.cliente) || {};
-  const hay = [o.productName, c.nombre, "#" + c.numero, c.ciudad, c.telefono, o.guiaUsa, o.guia]
+  if (q.charAt(0) === "#") return String(c.numero) === q.slice(1).trim();
+  const hay = [o.productName, c.nombre, c.ciudad, c.telefono, o.guiaUsa, o.guia]
     .filter(Boolean).join(" ").toLowerCase();
+  if (/^\d+$/.test(q)) return String(c.numero) === q || hay.includes(q);
   return hay.includes(q);
 }
 
@@ -570,8 +577,11 @@ function advanceBarHTML(statusKey) {
   const nk = nextStatus({ status: statusKey, tipoCompra: "tienda" });
   const lbl = nk ? statusLabel(nk) : "";
   return `<div class="col-advance">
-    <button class="btn-advance" data-adv="${statusKey}" ${n ? "" : "disabled"}>Avanzar (${n}) → ${lbl}</button>
-    <span class="col-advance-hint">Marca ✓ los productos y avánzalos juntos.</span>
+    <div class="col-advance-btns">
+      <button class="btn-advance" data-adv="${statusKey}" ${n ? "" : "disabled"}>Avanzar (${n}) → ${lbl}</button>
+      <button class="btn-back" data-back="${statusKey}" ${n ? "" : "disabled"}>← Regresar (${n})</button>
+    </div>
+    <span class="col-advance-hint">Marca ✓ los productos y avánzalos o regrésalos juntos.</span>
   </div>`;
 }
 
@@ -607,6 +617,7 @@ function colBodyHTML(list, statusKey) {
           <span class="box-selall ${allSel ? "on" : ""}" data-selall="${escapeHtml(g)}" data-selstatus="enviado" title="Seleccionar toda la caja">${allSel ? "✓" : ""}</span>
           <span class="box-name">📦 ${fecha ? fecha + " · " : ""}${escapeHtml(g)}</span>
           <span class="box-count">${groups[g].length}</span>
+          <button class="box-back" data-backgroup="${escapeHtml(g)}" data-backstatus="enviado" title="Regresar toda la caja al proceso anterior">⬅</button>
           <button class="box-advance" data-advgroup="${escapeHtml(g)}" data-advstatus="enviado" title="Avanzar toda la caja al siguiente proceso">➡</button>
           <button class="box-edit" data-boxedit="${escapeHtml(g)}" title="Editar nombre / N° de guía de la caja">✎</button>
         </div>
@@ -646,7 +657,8 @@ function groupedByClient(list, statusKey) {
           ${selectable ? `<span class="box-selall ${allSel ? "on" : ""}" data-selall="${escapeHtml(gkey)}" data-selstatus="${statusKey}" title="Seleccionar todo el cliente">${allSel ? "✓" : ""}</span>` : ""}
           <span class="box-name">👤 #${c.numero ?? "—"} ${escapeHtml(c.nombre || "")}</span>
           <span class="box-count">${items.length}</span>
-          ${selectable ? `<button class="box-advance" data-advgroup="${escapeHtml(gkey)}" data-advstatus="${statusKey}" title="Avanzar todo el cliente al siguiente proceso">➡</button>` : ""}
+          ${selectable ? `<button class="box-back" data-backgroup="${escapeHtml(gkey)}" data-backstatus="${statusKey}" title="Regresar todo el cliente al proceso anterior">⬅</button>
+          <button class="box-advance" data-advgroup="${escapeHtml(gkey)}" data-advstatus="${statusKey}" title="Avanzar todo el cliente al siguiente proceso">➡</button>` : ""}
           ${withInvoice ? `<button class="box-invoice" data-invcli="${escapeHtml(k)}" title="Imprimir factura (marcados o todos)">🧾</button>
           <button class="box-wa" data-wacli="${escapeHtml(k)}" title="Enviar factura por WhatsApp">${WA_ICON}</button>` : ""}
         </div>
@@ -703,7 +715,7 @@ function renderBoard() {
   // Plegar/desplegar grupos (cajas o clientes)
   board.querySelectorAll(".box-group-head").forEach(h =>
     h.addEventListener("click", e => {
-      if (e.target.closest(".box-edit") || e.target.closest(".box-invoice") || e.target.closest(".box-wa") || e.target.closest(".box-selall") || e.target.closest(".box-advance")) return;
+      if (e.target.closest(".box-edit") || e.target.closest(".box-invoice") || e.target.closest(".box-wa") || e.target.closest(".box-selall") || e.target.closest(".box-advance") || e.target.closest(".box-back")) return;
       const g = h.dataset.gkey;
       // Solo UNA caja abierta a la vez: al abrir otra, se cierra la anterior
       if (expandedBoxes.has(g)) { expandedBoxes.delete(g); }
@@ -720,6 +732,8 @@ function renderBoard() {
     el.addEventListener("click", e => { e.stopPropagation(); toggleInvSelect(el.dataset.inv); }));
   board.querySelectorAll(".btn-advance").forEach(b =>
     b.addEventListener("click", e => { e.stopPropagation(); advanceSelected(b.dataset.adv); }));
+  board.querySelectorAll(".btn-back").forEach(b =>
+    b.addEventListener("click", e => { e.stopPropagation(); regresarSelected(b.dataset.back); }));
   board.querySelectorAll(".box-selall").forEach(el =>
     el.addEventListener("click", e => {
       e.stopPropagation();
@@ -731,6 +745,8 @@ function renderBoard() {
     }));
   board.querySelectorAll(".box-advance").forEach(el =>
     el.addEventListener("click", e => { e.stopPropagation(); advanceGroup(el.dataset.advstatus, el.dataset.advgroup); }));
+  board.querySelectorAll(".box-back").forEach(el =>
+    el.addEventListener("click", e => { e.stopPropagation(); regresarGroup(el.dataset.backstatus, el.dataset.backgroup); }));
 
   // Búsqueda por columna
   board.querySelectorAll(".col-search").forEach(inp =>
@@ -794,6 +810,11 @@ function updateAdvanceBars() {
     btn.textContent = `Avanzar (${n}) → ${nk ? statusLabel(nk) : ""}`;
     btn.disabled = n === 0;
   });
+  document.querySelectorAll(".btn-back").forEach(btn => {
+    const n = selCountIn(btn.dataset.back);
+    btn.textContent = `← Regresar (${n})`;
+    btn.disabled = n === 0;
+  });
 }
 
 // Avanza una lista de productos (ids) de una columna al siguiente proceso
@@ -851,6 +872,47 @@ function advanceSelected(statusKey) {
 // Avanza TODO un grupo (cliente o caja) de un solo clic, sin tener que marcarlo
 function advanceGroup(statusKey, gkey) {
   return advanceOrders(groupOrderIds(statusKey, gkey), statusKey);
+}
+
+// Regresa una lista de productos (ids) al proceso ANTERIOR (según su propio recorrido)
+async function regresarOrders(ids, statusKey) {
+  ids = ids.filter(id => { const o = ORDERS.find(x => x.id === id); return o && o.status === statusKey; });
+  if (!ids.length) return;
+  if (!confirm(`¿Regresar ${ids.length} producto(s) al proceso anterior?`)) return;
+  const cambios = ids.map(id => { const o = ORDERS.find(x => x.id === id); return { o, prev: prevStatus(o) }; })
+    .filter(u => u.prev);
+  if (!cambios.length) return;
+
+  if (!FIREBASE_READY) {
+    const now = Date.now();
+    cambios.forEach(({ o, prev }) => {
+      const i = ORDERS.findIndex(x => x.id === o.id); if (i < 0) return;
+      ORDERS[i].status = prev; ORDERS[i].updatedAt = now;
+      if (statusIndex(prev) < statusIndex("enviado") && ORDERS[i].guiaUsa) ORDERS[i].guiaUsa = "";  // desligar de la caja
+    });
+    ids.forEach(id => invoiceSelection.delete(id));
+    saveLocal(); renderAllLocal();
+    return;
+  }
+  try {
+    for (let j = 0; j < cambios.length; j += 400) {
+      const batch = db.batch();
+      cambios.slice(j, j + 400).forEach(({ o, prev }) => {
+        const upd = { status: prev, updatedAt: firebase.firestore.FieldValue.serverTimestamp() };
+        if (statusIndex(prev) < statusIndex("enviado") && o.guiaUsa) upd.guiaUsa = firebase.firestore.FieldValue.delete();
+        batch.update(db.collection("ordenes").doc(o.id), upd);
+      });
+      await batch.commit();
+    }
+    ids.forEach(id => invoiceSelection.delete(id));
+  } catch (e) { alert("No se pudieron regresar: " + e.message); }
+}
+function regresarSelected(statusKey) {
+  const ids = [...invoiceSelection].filter(id => { const o = ORDERS.find(x => x.id === id); return o && o.status === statusKey; });
+  return regresarOrders(ids, statusKey);
+}
+function regresarGroup(statusKey, gkey) {
+  return regresarOrders(groupOrderIds(statusKey, gkey), statusKey);
 }
 
 function toggleBoxSelect(id) {
@@ -1033,7 +1095,7 @@ function openOrderModal(id) {
   // Listado de abonos
   const abonos = getAbonos(o);
   const abonosHTML = abonos.length
-    ? abonos.map((a, i) => `<div class="detail-row"><span class="k">Abono ${i + 1} · ${fmtDate(a.fecha)}</span><span>${COP(a.monto)}</span></div>`).join("")
+    ? abonos.map((a, i) => `<div class="detail-row"><span class="k">Abono ${i + 1} · ${fmtDate(a.fecha)}</span><span>${COP(a.monto)} <button class="mini-btn abono-edit" data-editabono="${i}" title="Corregir o eliminar este abono">✎</button></span></div>`).join("")
     : `<div class="detail-row"><span class="k">Sin abonos aún</span><span></span></div>`;
 
   const abonoAddUI = saldo > 0 ? `
@@ -1177,6 +1239,8 @@ function openOrderModal(id) {
   if (trackBtn) trackBtn.addEventListener("click", () => rastrearGuia(o.guia));
   const addAb = document.getElementById("addAbonoBtn");
   if (addAb) addAb.addEventListener("click", () => addAbono(o.id));
+  document.getElementById("orderModalBody").querySelectorAll("[data-editabono]").forEach(b =>
+    b.addEventListener("click", () => editAbono(o.id, Number(b.dataset.editabono))));
   const nuevoAb = document.getElementById("nuevoAbono");
   if (nuevoAb) nuevoAb.addEventListener("input", e => { e.target.value = fmtThousands(e.target.value); });
   const editB = document.getElementById("editOrderBtn");
@@ -1221,6 +1285,33 @@ async function addAbono(id) {
     if (excedente > 0) alert(`Se aplicó ${COP(paraOrden)} al pedido y ${COP(excedente)} quedó como saldo a favor del cliente.`);
     setTimeout(() => openOrderModal(id), 250);
   } catch (e) { alert("No se pudo registrar el abono: " + e.message); }
+}
+
+// Corregir o eliminar un abono ya registrado (por si se escribió un monto equivocado)
+async function editAbono(orderId, idx) {
+  const o = ORDERS.find(x => x.id === orderId);
+  if (!o) return;
+  const abonos = getAbonos(o).slice();
+  if (idx < 0 || idx >= abonos.length) return;
+  const actual = abonos[idx].monto;
+  const val = prompt("Corregir el monto de este abono (COP).\nEscribe 0 para eliminarlo:", actual);
+  if (val === null) return;
+  const monto = parseNum(val);
+  if (monto <= 0) abonos.splice(idx, 1);
+  else abonos[idx] = { ...abonos[idx], monto };
+  const total = abonos.reduce((a, x) => a + (Number(x.monto) || 0), 0);
+
+  if (!FIREBASE_READY) {
+    const i = ORDERS.findIndex(x => x.id === orderId);
+    ORDERS[i].abonos = abonos; ORDERS[i].abono = total; ORDERS[i].updatedAt = Date.now();
+    saveLocal(); renderAllLocal(); openOrderModal(orderId);
+    return;
+  }
+  try {
+    await db.collection("ordenes").doc(orderId).update({
+      abonos, abono: total, updatedAt: firebase.firestore.FieldValue.serverTimestamp() });
+    setTimeout(() => openOrderModal(orderId), 250);
+  } catch (e) { alert("No se pudo corregir el abono: " + e.message); }
 }
 
 async function advanceStatus(o) {
@@ -1409,7 +1500,12 @@ function resetOrderForm() {
   document.getElementById("orderForm").reset();
   document.getElementById("orderFormTitle").textContent = "Nueva orden";
   document.getElementById("saveOrderBtn").textContent = "Guardar orden";
+  // Limpiar explícitamente foto, vista previa, combo de cliente y saldo
+  const photo = document.getElementById("productPhoto"); if (photo) photo.value = "";
+  const prev = document.getElementById("photoPreview"); if (prev) prev.removeAttribute("src");
   document.getElementById("photoPreviewWrap").classList.add("hidden");
+  const cs = document.getElementById("clientSearch"); if (cs) cs.value = "";
+  const ab = document.getElementById("abono"); if (ab) ab.placeholder = "200.000";
   document.getElementById("orderFormMsg").textContent = "";
   document.getElementById("saldoView").value = "";
 }
@@ -1641,13 +1737,22 @@ function upsertClientLocal(cliente, existingId) {
   CLIENTS.sort((a, b) => (Number(a.numero) || 0) - (Number(b.numero) || 0));
 }
 
+// ¿Coincide un cliente con la búsqueda? El N° de cliente se busca EXACTO:
+// "#32" (o "32") trae solo el 32, NO el 321/322. El texto (nombre/ciudad/tel) por coincidencia.
+function clientMatches(c, q) {
+  if (!q) return true;
+  if (q.charAt(0) === "#") return String(c.numero) === q.slice(1).trim();
+  const text = [c.nombre, c.telefono, c.ciudad, c.departamento, c.barrio].filter(Boolean).join(" ").toLowerCase();
+  if (/^\d+$/.test(q)) return String(c.numero) === q || text.includes(q);
+  return text.includes(q);
+}
+
 // Combobox de clientes: muestra la lista y filtra por lo que se escribe
 function renderClientCombo(filter) {
   const box = document.getElementById("clientComboList");
   if (!box) return;
   const q = (filter || "").toLowerCase().trim();
-  const list = CLIENTS.filter(c => !q ||
-    [c.nombre, "#" + c.numero, c.telefono, c.ciudad].filter(Boolean).join(" ").toLowerCase().includes(q));
+  const list = CLIENTS.filter(c => clientMatches(c, q));
 
   if (!list.length) {
     box.innerHTML = `<div class="combo-empty">Sin coincidencias — se guardará como cliente nuevo</div>`;
@@ -1682,9 +1787,7 @@ function renderClientDatalist() {
 
 function renderClientsTable() {
   const q = document.getElementById("searchClients").value.toLowerCase().trim();
-  const list = CLIENTS.filter(c => !q ||
-    [c.nombre, "#" + c.numero, c.telefono, c.ciudad, c.departamento, c.barrio]
-      .filter(Boolean).join(" ").toLowerCase().includes(q));
+  const list = CLIENTS.filter(c => clientMatches(c, q));
 
   if (!list.length) {
     document.getElementById("clientsTableWrap").innerHTML =
@@ -2336,9 +2439,16 @@ function invoiceTicket(o) {
       <div class="cl">${escapeHtml(c.ciudad || "")} — ${escapeHtml(c.departamento || c.municipio || "")}</div>
       ${o.guia ? `<div class="cl">Guía: ${escapeHtml(o.guia)}</div>` : ""}
       <div class="rule"></div>
+      <div class="chdr">MEDIOS DE PAGO</div>
+      <div class="cl">Bancolombia: 59406114709</div>
+      <div class="cl">Nequi: 3242197444</div>
+      <div class="cl">Daviplata: 3242197444</div>
+      <div class="cl">Bre-B: 60330087</div>
+      <div class="cl" style="margin-top:1mm">Envía el comprobante con tu Nombre y Apellido.</div>
+      <div class="rule"></div>
       <div class="foot">
         <div class="fr">${IG_SVG}<span>@Armadiusa</span></div>
-        <div class="fr">${WA_SVG}<span>+1 (726) 219-5663</span></div>
+        <div class="fr">${WA_SVG}<span>318 914 6539</span></div>
       </div>
     </div>`;
 }
@@ -2372,9 +2482,16 @@ function invoiceTicketMulti(orders, c) {
       ${c.referencia ? `<div class="cl">Ref: ${escapeHtml(c.referencia)}</div>` : ""}
       <div class="cl">${escapeHtml(c.ciudad || "")} — ${escapeHtml(c.departamento || c.municipio || "")}</div>
       <div class="rule"></div>
+      <div class="chdr">MEDIOS DE PAGO</div>
+      <div class="cl">Bancolombia: 59406114709</div>
+      <div class="cl">Nequi: 3242197444</div>
+      <div class="cl">Daviplata: 3242197444</div>
+      <div class="cl">Bre-B: 60330087</div>
+      <div class="cl" style="margin-top:1mm">Envía el comprobante con tu Nombre y Apellido.</div>
+      <div class="rule"></div>
       <div class="foot">
         <div class="fr">${IG_SVG}<span>@Armadiusa</span></div>
-        <div class="fr">${WA_SVG}<span>+1 (726) 219-5663</span></div>
+        <div class="fr">${WA_SVG}<span>318 914 6539</span></div>
       </div>
     </div>`;
 }
@@ -2442,9 +2559,23 @@ function printInvoice(id) {
   printDocsSeparadas([t, t]);   // 2 copias, cada una en su propio recibo
 }
 
+// Datos de contacto y pago de ARMADIUSA (Colombia)
+const ARMADI_TEL_CO = "3189146539";
+const ARMADI_MAP_URL = "https://tinyurl.com/292vmx74";   // ubicación Cúcuta (enlace corto)
+const ARMADI_PAGOS = [
+  ["🏦 Bancolombia", "59406114709"],
+  ["📲 Nequi", "3242197444"],
+  ["📲 Daviplata", "3242197444"],
+  ["🔑 Bre-B", "60330087"],
+];
+
 // Texto de la factura para enviar por WhatsApp
 function buildInvoiceText(orders, c) {
   const L = [];
+  L.push("✨ ¡Hola! Bienvenid@ a ARMADIUSA 💖");
+  L.push("");
+  L.push("📦 ¡Tu encargo ya llegó! Aquí encontrarás el detalle de tus productos, los abonos realizados y el saldo pendiente.");
+  L.push("");
   L.push("*ARMADIUSA · Personal Shopper*");
   L.push("Detalle de tu pedido");
   L.push("");
@@ -2463,7 +2594,15 @@ function buildInvoiceText(orders, c) {
   L.push("*Total abonado:* " + COP(tA));
   L.push("*SALDO PENDIENTE:* " + COP(tS));
   L.push("");
-  L.push("Instagram: @Armadiusa  ·  WhatsApp: +1 (726) 219-5663");
+  L.push("💳 *MEDIOS DE PAGO ARMADIUSA*");
+  L.push("");
+  ARMADI_PAGOS.forEach(([n, v]) => L.push(n + ": " + v));
+  L.push("");
+  L.push("✅ Una vez realizado el pago, envíanos el comprobante junto con tu Nombre y Apellido.");
+  L.push("");
+  L.push("📍 Nuestra ubicación: " + ARMADI_MAP_URL);
+  L.push("");
+  L.push("💕 ¡Gracias por confiar en Armadiusa y elegirnos para tus compras!");
   return L.join("\n");
 }
 
