@@ -451,6 +451,30 @@ td .mini-btn:hover { color: #fff; background: var(--red); border-color: var(--re
 }
 .box-back:hover { border-color: var(--text); }
 
+/* Fecha de creación en la tarjeta */
+.card .fecha-creada { color: var(--muted-2); }
+
+/* Contador de días en "Por despachar" (máx 15 días) */
+.card .despacho-dias {
+  display: flex; align-items: center; justify-content: space-between; gap: 6px;
+  background: var(--bg-soft); border-radius: 6px; padding: 3px 7px; margin-top: 6px;
+}
+.card .despacho-dias.venc-rojo { background: #fde8e8; color: #b42318; font-weight: 700; }
+.card .despacho-dias.venc-rojo span:first-child { color: #b42318; }
+.wa-venc { cursor: pointer; display: inline-flex; align-items: center; line-height: 0; }
+
+/* Botón "brocha" (limpiar selección) y "Notificar" en la barra de avance */
+.btn-clear {
+  flex: 0 0 auto; background: var(--card); color: var(--text); border: 1px solid var(--line-strong);
+  border-radius: 8px; padding: 9px 11px; font-size: 13px; cursor: pointer; font-family: inherit;
+}
+.btn-clear:disabled { color: var(--muted-2); border-color: var(--line); cursor: default; }
+.btn-notify {
+  width: 100%; margin-top: 4px; background: #25d366; color: #fff; border: none; border-radius: 8px;
+  padding: 9px 10px; font-size: 13px; font-weight: 700; cursor: pointer; font-family: inherit;
+}
+.btn-notify:disabled { background: var(--line-strong); color: var(--muted); cursor: default; }
+
 /* Etiquetas de saldo fuera de las tarjetas (tabla de clientes) */
 .saldo-tag.pend { color: var(--text); font-weight: 700; }
 .saldo-tag.paid { color: var(--muted); font-weight: 600; }
@@ -497,7 +521,8 @@ td .mini-btn:hover { color: #fff; background: var(--red); border-color: var(--re
   background: transparent; border: none; color: var(--muted);
   font-size: 14px; padding: 2px 4px; border-radius: 6px; cursor: pointer;
 }
-.box-invoice:hover, .box-wa:hover { color: var(--text); background: var(--card); }
+.box-invoice:hover, .box-wa:hover, .box-retiro:hover { color: var(--text); background: var(--card); }
+.box-retiro { background: transparent; border: none; color: var(--muted); font-size: 14px; padding: 2px 4px; border-radius: 6px; cursor: pointer; flex: 0 0 auto; }
 
 /* Combobox de clientes (desplegable + búsqueda) */
 .field { display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: var(--muted); margin-bottom: 12px; }

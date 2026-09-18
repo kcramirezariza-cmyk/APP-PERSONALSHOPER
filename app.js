@@ -89,6 +89,19 @@ const fmtPrintNow = () => {
   return d.toLocaleDateString("es-CO", { day: "2-digit", month: "2-digit", year: "numeric" }) +
          " " + d.toLocaleTimeString("es-CO", { hour: "2-digit", minute: "2-digit" });
 };
+// Fecha corta DD/MM/AAAA (para mostrar en la tarjeta cuándo se creó la orden)
+const fmtDateDMY = ts => {
+  const m = tsMillis(ts); if (!m) return "";
+  return new Date(m).toLocaleDateString("es-CO", { day: "2-digit", month: "2-digit", year: "numeric" });
+};
+// Días en el proceso "Por despachar" (máx. 15 días de espera)
+const DIAS_MAX_DESPACHO = 15;
+function diasEnDespacho(o) {
+  const t = tsMillis(o.historial && o.historial.enviado_col) || tsMillis(o.updatedAt) || tsMillis(o.createdAt);
+  if (!t) return { dias: 0, restantes: DIAS_MAX_DESPACHO };
+  const dias = Math.floor((Date.now() - t) / 86400000);
+  return { dias, restantes: DIAS_MAX_DESPACHO - dias };
+}
 const escapeHtml = s => (s == null ? "" : String(s).replace(/[&<>"']/g,
   c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])));
 // Enlace de WhatsApp (asume móvil colombiano de 10 dígitos → agrega 57)
@@ -582,12 +595,17 @@ function advanceBarHTML(statusKey) {
   const n = selCountIn(statusKey);
   const nk = nextStatus({ status: statusKey, tipoCompra: "tienda" });
   const lbl = nk ? statusLabel(nk) : "";
+  const extra = statusKey === "enviado_col"
+    ? `<button class="btn-notify" data-notify="${statusKey}" ${n ? "" : "disabled"} title="Notificar por WhatsApp el vencimiento de los marcados">💬 Notificar (${n})</button>`
+    : "";
   return `<div class="col-advance">
     <div class="col-advance-btns">
       <button class="btn-advance" data-adv="${statusKey}" ${n ? "" : "disabled"}>Avanzar (${n}) → ${lbl}</button>
       <button class="btn-back" data-back="${statusKey}" ${n ? "" : "disabled"}>← Regresar (${n})</button>
+      <button class="btn-clear" data-clear="${statusKey}" ${n ? "" : "disabled"} title="Deseleccionar todo lo marcado en esta columna">🧹</button>
     </div>
-    <span class="col-advance-hint">Marca ✓ los productos y avánzalos o regrésalos juntos.</span>
+    ${extra}
+    <span class="col-advance-hint">Marca ✓ los productos y avánzalos, regrésalos o límpialos juntos.</span>
   </div>`;
 }
 
@@ -666,7 +684,8 @@ function groupedByClient(list, statusKey) {
           ${selectable ? `<button class="box-back" data-backgroup="${escapeHtml(gkey)}" data-backstatus="${statusKey}" title="Regresar todo el cliente al proceso anterior">⬅</button>
           <button class="box-advance" data-advgroup="${escapeHtml(gkey)}" data-advstatus="${statusKey}" title="Avanzar todo el cliente al siguiente proceso">➡</button>` : ""}
           ${withInvoice ? `<button class="box-invoice" data-invcli="${escapeHtml(k)}" title="Imprimir factura (marcados o todos)">🧾</button>
-          <button class="box-wa" data-wacli="${escapeHtml(k)}" title="Enviar factura por WhatsApp">${WA_ICON}</button>` : ""}
+          <button class="box-wa" data-wacli="${escapeHtml(k)}" title="Enviar factura por WhatsApp">${WA_ICON}</button>
+          <button class="box-retiro" data-retirocli="${escapeHtml(k)}" title="Notificar al cliente que tiene productos listos para retirar">📣</button>` : ""}
         </div>
         ${open ? `<div class="box-items">${items.map(o => cardHTML(o, undefined, selectable ? invoiceSelection.has(o.id) : undefined)).join("")}</div>` : ""}
       </div>`;
@@ -721,7 +740,7 @@ function renderBoard() {
   // Plegar/desplegar grupos (cajas o clientes)
   board.querySelectorAll(".box-group-head").forEach(h =>
     h.addEventListener("click", e => {
-      if (e.target.closest(".box-edit") || e.target.closest(".box-invoice") || e.target.closest(".box-wa") || e.target.closest(".box-selall") || e.target.closest(".box-advance") || e.target.closest(".box-back")) return;
+      if (e.target.closest(".box-edit") || e.target.closest(".box-invoice") || e.target.closest(".box-wa") || e.target.closest(".box-retiro") || e.target.closest(".box-selall") || e.target.closest(".box-advance") || e.target.closest(".box-back")) return;
       const g = h.dataset.gkey;
       // Solo UNA caja abierta a la vez: al abrir otra, se cierra la anterior
       if (expandedBoxes.has(g)) { expandedBoxes.delete(g); }
@@ -734,12 +753,24 @@ function renderBoard() {
     b.addEventListener("click", e => { e.stopPropagation(); printInvoiceClient(b.dataset.invcli); }));
   board.querySelectorAll(".box-wa").forEach(b =>
     b.addEventListener("click", e => { e.stopPropagation(); whatsappInvoiceClient(b.dataset.wacli); }));
+  board.querySelectorAll(".box-retiro").forEach(b =>
+    b.addEventListener("click", e => { e.stopPropagation(); notifyRetiro(b.dataset.retirocli); }));
+  board.querySelectorAll(".wa-venc").forEach(el =>
+    el.addEventListener("click", e => { e.stopPropagation(); notifyVencimiento([el.dataset.waventid]); }));
   board.querySelectorAll(".inv-check").forEach(el =>
     el.addEventListener("click", e => { e.stopPropagation(); toggleInvSelect(el.dataset.inv); }));
   board.querySelectorAll(".btn-advance").forEach(b =>
     b.addEventListener("click", e => { e.stopPropagation(); advanceSelected(b.dataset.adv); }));
   board.querySelectorAll(".btn-back").forEach(b =>
     b.addEventListener("click", e => { e.stopPropagation(); regresarSelected(b.dataset.back); }));
+  board.querySelectorAll(".btn-clear").forEach(b =>
+    b.addEventListener("click", e => { e.stopPropagation(); clearSelection(b.dataset.clear); }));
+  board.querySelectorAll(".btn-notify").forEach(b =>
+    b.addEventListener("click", e => {
+      e.stopPropagation();
+      const ids = [...invoiceSelection].filter(id => { const o = ORDERS.find(x => x.id === id); return o && o.status === b.dataset.notify; });
+      notifyVencimiento(ids);
+    }));
   board.querySelectorAll(".box-selall").forEach(el =>
     el.addEventListener("click", e => {
       e.stopPropagation();
@@ -821,6 +852,24 @@ function updateAdvanceBars() {
     btn.textContent = `← Regresar (${n})`;
     btn.disabled = n === 0;
   });
+  document.querySelectorAll(".btn-clear").forEach(btn => {
+    const n = selCountIn(btn.dataset.clear);
+    btn.disabled = n === 0;
+  });
+  document.querySelectorAll(".btn-notify").forEach(btn => {
+    const n = selCountIn(btn.dataset.notify);
+    btn.textContent = `💬 Notificar (${n})`;
+    btn.disabled = n === 0;
+  });
+}
+
+// Deselecciona ("brocha") todo lo marcado de una columna, sin cambiar su estado
+function clearSelection(statusKey) {
+  [...invoiceSelection].forEach(id => {
+    const o = ORDERS.find(x => x.id === id);
+    if (o && o.status === statusKey) invoiceSelection.delete(id);
+  });
+  renderBoard();
 }
 
 // Avanza una lista de productos (ids) de una columna al siguiente proceso
@@ -1002,6 +1051,83 @@ async function editBoxGuide(o, fromModal = true) {
   } catch (e) { alert("No se pudo actualizar la guía: " + e.message); }
 }
 
+// Etiqueta de días en "Por despachar" (máx 15 días) + icono WhatsApp para notificar al cliente
+function porDespacharTagHTML(o) {
+  const { dias, restantes } = diasEnDespacho(o);
+  const vencido = restantes <= 0;
+  const urgente = restantes <= 3;   // rojo cuando quedan 3 días o menos (incluye vencido)
+  const txt = vencido
+    ? `⏰ Vencido hace ${Math.abs(restantes)} día(s)`
+    : `⏰ ${restantes} día(s) restantes (de ${DIAS_MAX_DESPACHO})`;
+  return `<div class="guia despacho-dias ${urgente ? "venc-rojo" : ""}">
+      <span>${txt}</span>
+      <span class="wa-venc" data-waventid="${o.id}" title="Notificar al cliente por WhatsApp">${WA_ICON}</span>
+    </div>`;
+}
+
+// Texto de notificación de VENCIMIENTO (15 días) para uno o varios productos del mismo cliente
+function buildVencimientoText(orders, c) {
+  const L = [];
+  L.push("✨ ¡Hola " + (c.nombre || "") + "! Te escribimos de *ARMADIUSA* 💖");
+  L.push("");
+  L.push("📦 Tu(s) producto(s) llevan más del tiempo máximo de espera (15 días) en nuestra bodega para ser retirados, o están a punto de vencer ese plazo:");
+  L.push("");
+  orders.forEach(o => {
+    const { restantes } = diasEnDespacho(o);
+    const estado = restantes <= 0 ? `⏰ Vencido hace ${Math.abs(restantes)} día(s)` : `⏰ ${restantes} día(s) restantes`;
+    L.push("• " + o.productName + " — " + estado);
+    L.push("   Abonado: " + COP(abonoTotal(o)) + " · Saldo: " + COP(Math.max(0, saldoDe(o))));
+  });
+  const tS = orders.reduce((a, o) => a + Math.max(0, saldoDe(o)), 0);
+  L.push("");
+  L.push("*Saldo pendiente total:* " + COP(tS));
+  L.push("");
+  L.push("Por favor coordina el retiro y/o el pago pendiente lo antes posible. 🙏");
+  L.push("");
+  L.push("💕 ¡Gracias por confiar en Armadiusa!");
+  return L.join("\n");
+}
+
+// Notifica por WhatsApp el vencimiento de uno o varios productos (deben ser del MISMO cliente)
+function notifyVencimiento(ids) {
+  const orders = ids.map(id => ORDERS.find(o => o.id === id)).filter(Boolean);
+  if (!orders.length) return;
+  const numeros = [...new Set(orders.map(o => (o.cliente || {}).numero))];
+  if (numeros.length > 1) {
+    alert("Los productos seleccionados son de varios clientes distintos. Selecciona productos de un solo cliente para enviar la notificación.");
+    return;
+  }
+  const c = orders[0].cliente || {};
+  if (!c.telefono) { alert("Este cliente no tiene teléfono registrado."); return; }
+  const url = waLink(c.telefono) + "?text=" + encodeURIComponent(buildVencimientoText(orders, c));
+  window.open(url, "_blank");
+}
+
+// Texto para avisar que hay productos LISTOS PARA RETIRAR (grupo completo del cliente)
+function buildRetiroText(orders, c) {
+  const L = [];
+  L.push("✨ ¡Hola " + (c.nombre || "") + "! Te escribimos de *ARMADIUSA* 💖");
+  L.push("");
+  L.push(`📦 Tienes *${orders.length}* producto(s) listo(s) para retirar:`);
+  L.push("");
+  orders.forEach(o => L.push("• " + o.productName + " — Saldo: " + COP(Math.max(0, saldoDe(o)))));
+  const tS = orders.reduce((a, o) => a + Math.max(0, saldoDe(o)), 0);
+  L.push("");
+  L.push("*Saldo pendiente total:* " + COP(tS));
+  L.push("");
+  L.push("Quedamos atentas para coordinar el retiro. 💕");
+  return L.join("\n");
+}
+function notifyRetiro(numero) {
+  const grupo = ORDERS.filter(o => o.status === "enviado_col"
+    && String((o.cliente || {}).numero) === String(numero) && !isArchived(o));
+  if (!grupo.length) { alert("Ese cliente no tiene productos en Por despachar."); return; }
+  const c = grupo[0].cliente || {};
+  if (!c.telefono) { alert("Ese cliente no tiene teléfono registrado."); return; }
+  const url = waLink(c.telefono) + "?text=" + encodeURIComponent(buildRetiroText(grupo, c));
+  window.open(url, "_blank");
+}
+
 function cardHTML(o, sel, invSel) {
   const saldo = saldoDe(o);
   const favor = saldo < 0;
@@ -1033,6 +1159,8 @@ function cardHTML(o, sel, invSel) {
         <span class="city">${escapeHtml(c.ciudad || "")}</span>
         <span class="saldo-tag ${saldoCls}">${saldoTag}</span>
       </div>
+      ${o.createdAt ? `<div class="guia fecha-creada">🗓️ Creada: ${fmtDateDMY(o.createdAt)}</div>` : ""}
+      ${o.status === "enviado_col" ? porDespacharTagHTML(o) : ""}
       ${compradoOnline ? `<div class="guia comprado-tag">✅ Comprado · falta recibir</div>` : ""}
       ${compradoDirecta ? `<div class="guia comprado-tag azul">✈️ Comprado · viaja directo a Cúcuta</div>` : ""}
       ${o.tienda && (o.status === "por_comprar_online" || o.status === "por_comprar_tienda" || o.status === "compra_directa") ? `<div class="guia">🛍️ ${escapeHtml(o.tienda)}</div>` : ""}
