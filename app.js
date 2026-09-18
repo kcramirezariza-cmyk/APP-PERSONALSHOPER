@@ -641,9 +641,11 @@ function colBodyHTML(list, statusKey) {
           <span class="box-selall ${allSel ? "on" : ""}" data-selall="${escapeHtml(g)}" data-selstatus="enviado" title="Seleccionar toda la caja">${allSel ? "✓" : ""}</span>
           <span class="box-name">📦 ${fecha ? fecha + " · " : ""}${escapeHtml(g)}</span>
           <span class="box-count">${groups[g].length}</span>
-          <button class="box-back" data-backgroup="${escapeHtml(g)}" data-backstatus="enviado" title="Regresar toda la caja al proceso anterior">⬅</button>
-          <button class="box-advance" data-advgroup="${escapeHtml(g)}" data-advstatus="enviado" title="Avanzar toda la caja al siguiente proceso">➡</button>
-          <button class="box-edit" data-boxedit="${escapeHtml(g)}" title="Editar nombre / N° de guía de la caja">✎</button>
+          <span class="box-actions">
+            <button class="box-back" data-backgroup="${escapeHtml(g)}" data-backstatus="enviado" title="Regresar toda la caja al proceso anterior">⬅</button>
+            <button class="box-advance" data-advgroup="${escapeHtml(g)}" data-advstatus="enviado" title="Avanzar toda la caja al siguiente proceso">➡</button>
+            <button class="box-edit" data-boxedit="${escapeHtml(g)}" title="Editar nombre / N° de guía de la caja">✎</button>
+          </span>
         </div>
         ${open ? `<div class="box-items">${groups[g].map(o => cardHTML(o, undefined, invoiceSelection.has(o.id))).join("")}</div>` : ""}
       </div>`;
@@ -681,11 +683,13 @@ function groupedByClient(list, statusKey) {
           ${selectable ? `<span class="box-selall ${allSel ? "on" : ""}" data-selall="${escapeHtml(gkey)}" data-selstatus="${statusKey}" title="Seleccionar todo el cliente">${allSel ? "✓" : ""}</span>` : ""}
           <span class="box-name">👤 #${c.numero ?? "—"} ${escapeHtml(c.nombre || "")}</span>
           <span class="box-count">${items.length}</span>
-          ${selectable ? `<button class="box-back" data-backgroup="${escapeHtml(gkey)}" data-backstatus="${statusKey}" title="Regresar todo el cliente al proceso anterior">⬅</button>
-          <button class="box-advance" data-advgroup="${escapeHtml(gkey)}" data-advstatus="${statusKey}" title="Avanzar todo el cliente al siguiente proceso">➡</button>` : ""}
-          ${withInvoice ? `<button class="box-invoice" data-invcli="${escapeHtml(k)}" title="Imprimir factura (marcados o todos)">🧾</button>
-          <button class="box-wa" data-wacli="${escapeHtml(k)}" title="Enviar factura por WhatsApp">${WA_ICON}</button>
-          <button class="box-retiro" data-retirocli="${escapeHtml(k)}" title="Notificar al cliente que tiene productos listos para retirar">📣</button>` : ""}
+          <span class="box-actions">
+            ${selectable ? `<button class="box-back" data-backgroup="${escapeHtml(gkey)}" data-backstatus="${statusKey}" title="Regresar todo el cliente al proceso anterior">⬅</button>
+            <button class="box-advance" data-advgroup="${escapeHtml(gkey)}" data-advstatus="${statusKey}" title="Avanzar todo el cliente al siguiente proceso">➡</button>` : ""}
+            ${withInvoice ? `<button class="box-invoice" data-invcli="${escapeHtml(k)}" title="Imprimir factura (marcados o todos)">🧾</button>
+            <button class="box-wa" data-wacli="${escapeHtml(k)}" title="Enviar factura por WhatsApp">${WA_ICON}</button>
+            <button class="box-retiro" data-retirocli="${escapeHtml(k)}" title="Notificar al cliente que tiene productos listos para retirar">📣</button>` : ""}
+          </span>
         </div>
         ${open ? `<div class="box-items">${items.map(o => cardHTML(o, undefined, selectable ? invoiceSelection.has(o.id) : undefined)).join("")}</div>` : ""}
       </div>`;
