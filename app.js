@@ -497,7 +497,10 @@ function getFilteredOrders() {
   return ORDERS.filter(o => {
     if (isArchived(o)) return false;            // los archivados van al Historial
     if (st && o.status !== st) return false;
-    if (clientFilter != null && (o.cliente || {}).numero !== clientFilter) return false;
+    if (clientFilter != null) {
+      if ((o.cliente || {}).numero !== clientFilter) return false;
+      if (o.status === "entregado") return false;   // "Ver pedidos" solo muestra lo que sigue en proceso
+    }
     return true;
   });
 }
@@ -2080,6 +2083,9 @@ async function saveClientEdit() {
 function cuentaCliente(numero) {
   const allOrders = ORDERS.filter(o => (o.cliente || {}).numero === numero);
   const orders = allOrders.filter(o => !isArchived(o));
+  // "En proceso" = todavía no entregado. El botón "Ver (N)" de Clientes cuenta esto,
+  // para que coincida con lo que realmente se ve al abrir "Ver pedidos" en el tablero.
+  const enProceso = allOrders.filter(o => o.status !== "entregado");
   const valor = orders.reduce((a, o) => a + (o.valor || 0), 0);
   const abonado = orders.reduce((a, o) => a + abonoTotal(o), 0);
   const deuda = orders.reduce((a, o) => a + Math.max(0, saldoDe(o)), 0);
@@ -2088,7 +2094,7 @@ function cuentaCliente(numero) {
   const sobreAbono = orders.reduce((a, o) => a + Math.max(0, -saldoDe(o)), 0);  // datos antiguos con sobre-abono
   const net = deuda - creditoStored - sobreAbono;   // >0 debe · <0 a favor
   return {
-    orders, allOrders, valor, abonado, count: allOrders.length, cli, creditoStored,
+    orders, allOrders, valor, abonado, count: enProceso.length, cli, creditoStored,
     saldo: Math.max(0, net), credito: Math.max(0, -net),
   };
 }
